@@ -122,7 +122,7 @@ try {
         }
         case 13:{
           const t=await generated(page,'generateArithmetic',level);
-          await page.getByLabel('计算结果').fill(String(t.answer));await click(page,'提交答案');await click(page,'提交答案');break;
+          await page.getByLabel('计算结果').fill(String(Math.abs(t.answer)));if(t.answer<0)await click(page,'切换正负');await click(page,'提交答案');await click(page,'提交答案');break;
         }
         case 14:{
           const t=await generated(page,'generateSwitch',level);

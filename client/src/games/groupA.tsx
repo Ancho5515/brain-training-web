@@ -60,7 +60,7 @@ function Ready({ onStart, text = '开始观察', interrupted = false }: { onStar
 function NumberAnswer({ label, onSubmit, min, max }: { label: string; onSubmit: (answer: number) => void; min?: number; max?: number }) {
   const [value, setValue] = useState('');
   const answer = Number(value), valid = value.trim() !== '' && Number.isInteger(answer) && (min === undefined || answer >= min) && (max === undefined || answer <= max);
-  return <form onSubmit={e => { e.preventDefault(); if (valid) onSubmit(answer); }}><label className="form-label">{label}<input className="field" aria-label={label} type="number" inputMode={min !== undefined && min >= 0 ? 'numeric' : 'decimal'} min={min} max={max} step="1" value={value} onChange={e => setValue(e.target.value)} autoComplete="off" autoFocus /></label><button className="primary" type="submit" disabled={!valid}>提交答案</button></form>;
+  return <form onSubmit={e => { e.preventDefault(); if (valid) onSubmit(answer); }}><label className="form-label">{label}<input className="field" aria-label={label} type="number" inputMode={min !== undefined && min >= 0 ? 'numeric' : 'decimal'} min={min} max={max} step="1" value={value} onChange={e => setValue(e.target.value)} autoComplete="off" autoFocus /></label>{min === undefined && <button className="secondary" type="button" disabled={!valid || answer === 0} onClick={() => setValue(String(-answer))}>切换正负</button>}<button className="primary" type="submit" disabled={!valid}>提交答案</button></form>;
 }
 function CardGlyph({ card, size = 45 }: { card: Card; size?: number }) { return <Glyph shape={card.shape} striped={card.striped} rotation={card.rotation} size={size} />; }
 

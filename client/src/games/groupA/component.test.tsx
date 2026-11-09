@@ -19,4 +19,8 @@ describe('group A registration and initial lifecycle', () => {
     }
     expect(finishes).toBe(0);
   });
+  it('provides a sign toggle for arithmetic on mobile number keyboards',()=>{
+    const html=renderToStaticMarkup(createElement(groupA[13],{level:30,seed:43,onFinish:()=>{}}));
+    expect(html).toContain('切换正负');
+  });
 });
