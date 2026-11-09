@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Group A component verification</title></head><body><main id="root" style="max-width:900px;margin:auto;padding:8px"></main><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {groupA} from '../groupA.tsx';
+import '../../styles.css';
+const params=new URLSearchParams(location.search);
+const id=Number(params.get('id')||1), level=Number(params.get('level')||1), seed=Number(params.get('seed')||43);
+window.__results=[];
+window.__reset=(nextId=id,nextLevel=level,nextSeed=seed)=>{
+  window.__results=[];
+  const Component=groupA[nextId];
+  root.render(React.createElement(Component,{key:`${nextId}:${nextLevel}:${nextSeed}`,level:nextLevel,seed:nextSeed,onFinish:result=>window.__results.push(result)}));
+};
+const root=createRoot(document.getElementById('root'));
+window.__reset();
+</script></body></html>
