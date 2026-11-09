@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="server/BrainTraining.Server.csproj" />
+  <Project Path="tests/BrainTraining.Server.Tests/BrainTraining.Server.Tests.csproj" />
+</Solution>
