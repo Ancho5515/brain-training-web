@@ -1,0 +1,17 @@
+node_modules/
+client/dist/
+**/bin/
+**/obj/
+.tools/
+.data/
+data/
+releases/
+logs/
+*.db
+*.db-*
+*.log
+.env
+.superpowers/
+playwright-report/
+test-results/
+*.user
