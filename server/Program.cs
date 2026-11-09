@@ -94,7 +94,7 @@ app.Use(async (context, next) =>
         try { await context.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(context); }
         catch (AntiforgeryValidationException)
         {
-            await Results.BadRequest(new { error = "请刷新页面后重试。" }).ExecuteAsync(context);
+            await Results.BadRequest(new { code = "csrf_required", error = "请刷新页面后重试。" }).ExecuteAsync(context);
             return;
         }
         var throttle = context.RequestServices.GetRequiredService<RequestThrottle>();

@@ -93,8 +93,14 @@ public sealed class ApiTests
         await browser.Bootstrap();
         foreach (var route in new[] { "/api/accounts", "/api/login", "/api/logout", "/api/device/name", "/api/records", "/api/password" })
         {
-            Assert.Equal(HttpStatusCode.BadRequest, (await browser.Post(route, new { }, csrf: false)).StatusCode);
-            Assert.Equal(HttpStatusCode.BadRequest, (await browser.Post(route, new { }, csrf: false, token: "forged")).StatusCode);
+            foreach (var token in new string?[] { null, "forged" })
+            {
+                var response = await browser.Post(route, new { }, csrf: false, token: token);
+                Assert.Equal(HttpStatusCode.BadRequest, response.StatusCode);
+                var error = await response.Content.ReadFromJsonAsync<JsonElement>();
+                Assert.True(error.TryGetProperty("code", out var code), "Antiforgery errors need a machine-readable code.");
+                Assert.Equal("csrf_required", code.GetString());
+            }
         }
     }
 
