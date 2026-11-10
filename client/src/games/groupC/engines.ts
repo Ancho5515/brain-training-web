@@ -5,12 +5,21 @@ export function evaluateCircle(points:Point[],center:Point,shortSide:number){
  if(points.length<20)return empty;
  const radii=points.map(p=>Math.hypot(p.x-center.x,p.y-center.y));const radius=radii.reduce((a,b)=>a+b,0)/radii.length;
  if(radius<1)return empty;
- const angles=points.map(p=>Math.atan2(p.y-center.y,p.x-center.x));const bins=new Set(angles.map(a=>Math.floor((a+Math.PI)/(2*Math.PI)*72)%72));
- let turn=0,length=0;for(let i=1;i<points.length;i++){let d=angles[i]-angles[i-1];while(d>Math.PI)d-=2*Math.PI;while(d< -Math.PI)d+=2*Math.PI;turn+=d;length+=Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);}
+ const angles=points.map(p=>Math.atan2(p.y-center.y,p.x-center.x));
+ const fullTurn=2*Math.PI;
+ let turn=0,length=0,maxStep=0;
+ for(let i=1;i<points.length;i++){
+  let delta=angles[i]-angles[i-1];
+  if(Math.abs(delta)>Math.PI)delta-=Math.sign(delta)*fullTurn;
+  turn+=delta;
+  maxStep=Math.max(maxStep,Math.abs(delta));
+  length+=Math.hypot(points[i].x-points[i-1].x,points[i].y-points[i-1].y);
+ }
  const closure=Math.hypot(points[0].x-points[points.length-1].x,points[0].y-points[points.length-1].y)/radius;
  const radialDeviation=Math.sqrt(radii.reduce((s,r)=>s+(r-radius)**2,0)/radii.length)/radius;
- const coverage=bins.size/72,diameter=radius*2;
- const valid=diameter>=shortSide*.4&&coverage>=.9&&closure<=.35&&Math.abs(turn)>=Math.PI*1.8&&Math.abs(turn)<=Math.PI*2.5&&radialDeviation<.35&&length>=radius*5.5;
+ // 连续笔迹的净转角不受事件采样密度影响。单段跨过半径两侧的大弦不能补足覆盖。
+ const coverage=Math.min(1,Math.abs(turn)/fullTurn),diameter=radius*2;
+ const valid=diameter>=shortSide*.4&&coverage>=.9&&closure<=.35&&Math.abs(turn)<=Math.PI*2.5&&maxStep<=Math.PI/2&&radialDeviation<.35&&length>=radius*5.5;
  return {valid,score:valid?Math.max(0,Math.round(100*(1-radialDeviation*2)*(1-closure*.15)*coverage)):0,coverage,radialDeviation,closure,diameter};
 }
 export function evaluateTrackingSample(active:boolean,ball:Point,target:Point,path:Point[],width:number){

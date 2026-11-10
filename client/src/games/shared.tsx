@@ -1,10 +1,31 @@
-import { useId, useRef, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { GameResult } from './types';
 export function seeded(seed:number):()=>number { let s=seed>>>0;return ()=>{s+=0x6D2B79F5;let t=Math.imul(s^(s>>>15),1|s);t^=t+Math.imul(t^(t>>>7),61|t);return ((t^(t>>>14))>>>0)/4294967296;}; }
 export function randInt(rng:()=>number,min:number,max:number){return Math.floor(rng()*(max-min+1))+min;}
 export function shuffle<T>(items:readonly T[],rng:()=>number):T[]{const a=[...items];for(let i=a.length-1;i>0;i--){const j=randInt(rng,0,i);[a[i],a[j]]=[a[j],a[i]];}return a;}
 export function useElapsed(){const start=useRef(performance.now());return ()=>Math.max(0,Math.round(performance.now()-start.current));}
 export function makeResult(accuracy:number,durationMs:number,metrics:GameResult['metrics']={}):GameResult {const a=Math.max(0,Math.min(1,Number.isFinite(accuracy)?accuracy:0));return {score:Math.round(a*100),accuracy:a,durationMs:Math.max(0,Math.round(durationMs)),metrics};}
+export function RoundClock({ level, onExpire, baseMs = 210000, stepMs = 3000 }: {
+  level: number; onExpire: () => void; baseMs?: number; stepMs?: number;
+}) {
+  const limit = Math.max(30000, baseMs - level * stepMs);
+  const callback = useRef(onExpire);
+  const [remaining, setRemaining] = useState(limit);
+  callback.current = onExpire;
+  useEffect(() => {
+    const start = performance.now();
+    const timer = setInterval(() => {
+      const left = Math.max(0, limit - (performance.now() - start));
+      setRemaining(left);
+      if (left === 0) {
+        clearInterval(timer);
+        callback.current();
+      }
+    }, 250);
+    return () => clearInterval(timer);
+  }, [limit]);
+  return <p className="muted" aria-label="本题剩余时间">本题限时 {Math.round(limit / 1000)} 秒 · 剩余 {Math.ceil(remaining / 1000)} 秒</p>;
+}
 export function GameFrame({title,instructions,children,footer}:{title:string;instructions:ReactNode;children:ReactNode;footer?:ReactNode}){return <section className="game-frame"><div className="game-instructions"><h2>{title}</h2><p>{instructions}</p></div><div className="game-scene">{children}</div>{footer&&<div className="game-footer">{footer}</div>}</section>;}
 export function ChoiceButtons({options,onChoose,disabled=false}:{options:{id:string;label:ReactNode}[];onChoose:(id:string)=>void;disabled?:boolean}){return <div className="answer-grid">{options.map(o=><button className="choice" key={o.id} disabled={disabled} onClick={()=>onChoose(o.id)}>{o.label}</button>)}</div>;}
 export const COLORS=['#167b68','#e3695d','#407fc0','#a57917','#8f63b3','#347c45'];

@@ -10,7 +10,7 @@ export default function App(){
  const visible=useMemo(()=>filterGames({query,category,ageMax:age,noNumbers}),[query,category,age,noNumbers]);
  const progress=recordsOwner===session?.user?.id?records?.progress??[]:[];
  const chosen=route?games.find(g=>g.id===route.id):null;
- function nav(v:string){location.hash='';setRoute(null);setView(v);}
+ function nav(v:string){if(location.hash)history.pushState(null,'',location.pathname+location.search);setRoute(null);setView(v);}
  function signIn(mode:'login'|'register'='login'){setAuthMode(session?.accounts.length?mode:'register');setAuthOpen(true);}
  function play(id:number){const p=progress.find(x=>x.gameId===id);location.hash='/game/'+id+'?level='+(p?.lastLevel??1);}
  async function logout(){if(!session)return;try{await api('/logout','POST',{},session.csrfToken);setRecords(null);setRecordsOwner('');await reload();nav('games');}catch(e){setError((e as Error).message);}}

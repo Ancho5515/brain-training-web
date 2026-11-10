@@ -3,8 +3,15 @@ import { evaluateCircle, evaluateTrackingSample, unfoldHoles, foldNet, cubeView,
 import { seeded } from '../shared';
 
 describe('fixed-center circle validity', () => {
- const arc=(radius:number,turns=1)=>Array.from({length:181},(_,i)=>({x:200+radius*Math.cos(i/180*Math.PI*2*turns),y:180+radius*Math.sin(i/180*Math.PI*2*turns)}));
+ const arc=(radius:number,turns=1,steps=180)=>Array.from({length:steps+1},(_,i)=>({x:200+radius*Math.cos(i/steps*Math.PI*2*turns),y:180+radius*Math.sin(i/steps*Math.PI*2*turns)}));
  it('rewards a full sufficiently large circle around the solid center',()=>expect(evaluateCircle(arc(100),{x:200,y:180},360).score).toBeGreaterThan(95));
+ it('接受由 40 段连续笔迹画出的整圆，不受浏览器采样密度影响', () => {
+   expect(evaluateCircle(arc(100, 1, 40), { x: 200, y: 180 }, 360).score).toBeGreaterThan(95);
+   expect(evaluateCircle(arc(100, -1, 40), { x: 200, y: 180 }, 360).score).toBeGreaterThan(95);
+   const crossing = arc(100, 1, 40);
+   crossing.splice(10, 0, crossing[30]);
+   expect(evaluateCircle(crossing, { x: 200, y: 180 }, 360).valid).toBe(false);
+ });
  it('rejects tiny circles, partial arcs and circles around a false center',()=>{expect(evaluateCircle(arc(25),{x:200,y:180},360).valid).toBe(false);expect(evaluateCircle(arc(100,.25),{x:200,y:180},360).valid).toBe(false);expect(evaluateCircle(arc(100),{x:30,y:30},360).valid).toBe(false);});
 });
 describe('paper reflections and physical cube folding',()=>{
