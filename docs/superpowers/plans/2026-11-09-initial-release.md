@@ -15,36 +15,34 @@ Windows, port8787, server-side persistent browser/account/run isolation,40 playa
 - Deploy failure or unrelated port occupation preserves current app/data.
 - Touch cancel, backgrounding, session switch and repeated saves.
 
-### Task1 Backend
-Own server/** and tests/BrainTraining.Server.Tests/**. Consume/produce exactHTTP contract.
-- [ ] Write/run failing integration tests: device separation, multiple accounts, passwords, CSRF, idempotent save/restart.
-- [ ] Implement Identity hash/cookie, EF SQLite, API/static host, loopback inventory.
-- [ ] Run full backend tests and commit.
+### 任务 1 后端
 
-### Task2 GamesA1..14
-Own groupA.tsx/groupA/** with tests.
-- [ ] Failing tests: ordered/unordered, counting filters, arithmetic precedence, rotation.
-- [ ] Implement actual seeded level-scaled interactions.
-- [ ] Run tests/commit.
+- [x] 实现 Identity 密码哈希、设备与会话凭证、SQLite 记录和仅回环访问的主机设备清单。
+- [x] Release 集成测试通过 15 项，覆盖设备隔离、同设备多账号、密码、CSRF、幂等保存和重启持久化。
 
-### Task3 GamesB15..27
-Own groupB.tsx/groupB/** with tests.
-- [ ] Failing tests: numeric sort, OR, semantics, n-back once, valid inventory slips.
-- [ ] Implement13 views/engines; run tests/commit.
+### 任务 2 游戏 1–14
 
-### Task4 GamesC28..40
-Own groupC.tsx/groupC/** with tests.
-- [ ] Failing tests: circle validity, folds/cubes, multiple solutions, directed weighted checkpoints/Hanoi legality.
-- [ ] Implement13 touch/puzzle games; run tests/commit.
+- [x] 14 款按种子出题并可操作结算，覆盖有序和无序作答、计数条件、算式优先级及旋转判定。
+- [x] 本机 Edge 第 1、15、30 级共 42 组交互与结算通过。
 
-### Task5 Windows deployment
-Own bootstrap.ps1/scripts/**/docs/windows-deployment.md.
-- [ ] Failing tests: fresh/existing checkout, port conflict, build/health failure data safety.
-- [ ] Implement verified tools, staging publish/start/stop/rollback/fixed8787.
-- [ ] Parse/test underPowerShell, document actualWindows gaps; commit.
+### 任务 3 游戏 15–27
 
-### Task6 Shell/integration
-Own shared contracts/catalog/App/styles/config/docs.
-- [ ] Test40 metadata/filters, then implement responsive catalog/account picker/3-roundhost/records/device pages.
-- [ ] Build full client/server; test40 games simple/mid/hard, auth and phone/tablet layout, restart data.
-- [ ] Independent review/fix, record evidence and publish main after pass.
+- [x] 13 款已接入游戏宿主。规则测试覆盖左右镜像、数值排序、着色并集、中文词义、颜色与形状联合计数、线索更正、每张牌只答一次和有效单据计算。
+- [x] 本机 Edge 第 1、15、30 级共 39 组交互与结算通过。
+
+### 任务 4 游戏 28–40
+
+- [x] 13 款可操作结算。规则测试覆盖画圆、折叠、立方体、多个合法解、有向加权路线和圆盘移动。
+- [x] 本机 Edge 第 1、15、30 级共 39 组交互与结算通过。画圆按笔迹净转角计算覆盖率，回归测试覆盖低采样密度和跨圆长弦。
+
+### 任务 5 Windows 部署
+
+- [x] 使用校验过的固定工具和依赖锁文件，暂存发布后按固定端口 8787 切换。健康检查失败时恢复原版本。
+- [x] Windows PowerShell 5.1 脚本解析、部署断言和 Windows x64 实际发布通过。已生成并校验 Windows ARM64 自包含产物。 [部署验收](../../windows-deployment.md#已执行与待执行验证)
+
+### 任务 6 整合
+
+- [x] 40 张目录卡片与可运行组件逐一对应。生产构建及前端 71 项测试通过。
+- [x] 在本机 Edge 的桌面、手机和平板视口验证目录、各游戏和触控输入。验证实际发布中的多账号切换、三回合保存、草稿恢复、断线补存、导出和设备隔离。
+- [x] 独立复核新增游戏规则和难度，并修复从游戏页进入训练记录或设备页的导航。
+- [ ] 使用实体手机和 iPad Air 从另一台设备访问部署主机，检查触屏和局域网连通。Windows ARM64 实机启动及防火墙规则仍待验证。

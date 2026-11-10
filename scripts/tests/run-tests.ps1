@@ -57,6 +57,31 @@ try {
     Assert-True ($null -ne (Get-Process -Id $PID -ErrorAction Stop)) 'Real unrelated process survives stop refusal'
     Assert-Equal (ConvertTo-BrainNativeArgument 'D:\Folder with spaces\') '"D:\Folder with spaces\\"' 'Native arguments preserve a trailing slash inside quotes'
 
+    if ($env:OS -eq 'Windows_NT') {
+        $probeFile = Join-Path $testRoot 'windows-process-path.ps1'
+        @'
+param([string]$CommonScript, [int]$TargetId, [switch]$WithoutMainModule)
+$ErrorActionPreference = 'Stop'
+if ($WithoutMainModule) {
+    Update-TypeData -TypeName System.Diagnostics.Process -MemberType ScriptProperty -MemberName Path -Value { $null } -Force
+} elseif ([Environment]::Is64BitProcess) { throw 'Expected 32-bit Windows PowerShell.' }
+. $CommonScript
+(Get-BrainProcessSnapshot $TargetId).ExecutablePath
+'@ | Set-Content -LiteralPath $probeFile -Encoding UTF8
+        $commonScript = Join-Path $repoRoot 'scripts/common.ps1'
+        $fixturePath = (Get-Process -Id $PID).Path
+        $nativePowerShell = Join-Path $env:WINDIR 'System32/WindowsPowerShell/v1.0/powershell.exe'
+        $withoutModulePath = & $nativePowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $probeFile $commonScript $PID -WithoutMainModule
+        Assert-Equal $LASTEXITCODE 0 'Windows process-path probe completed with MainModule unavailable'
+        Assert-True (Test-BrainSamePath $withoutModulePath $fixturePath) 'Windows resolves the executable when MainModule is unavailable'
+        $win32PowerShell = Join-Path $env:WINDIR 'SysWOW64/WindowsPowerShell/v1.0/powershell.exe'
+        if ([Environment]::Is64BitProcess -and (Test-Path -LiteralPath $win32PowerShell -PathType Leaf)) {
+            $nativePath = & $win32PowerShell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File $probeFile $commonScript $PID
+            Assert-Equal $LASTEXITCODE 0 '32-bit PowerShell completed the native-process probe'
+            Assert-True (Test-BrainSamePath $nativePath $fixturePath) '32-bit PowerShell can verify a native 64-bit process path'
+        }
+    }
+
     # Download boundaries use tiny local ZIPs. Hashing and extraction are real.
     $downloadOriginal = (Get-Command Invoke-BrainDownload).ScriptBlock
     $script:DownloadFixtures = @{}
@@ -151,6 +176,31 @@ param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [sw
     $badRepo = Join-Path $testRoot 'bad-repo'; New-Item $badRepo -ItemType Directory | Out-Null
     & $git -C $badRepo init -q; & $git -C $badRepo remote add origin 'https://github.com/other/brain-training-web.git'
     Assert-Throws { Find-BrainCheckout $git $install $badRepo '' } 'remote'
+
+    # Publish must use locked dependencies and avoid .NET's first-run user settings.
+    [IO.File]::WriteAllText((Join-Path $sourceRepo 'client/package-lock.json'), '{}')
+    $nativeOriginal = (Get-Command Invoke-BrainNative).ScriptBlock
+    $originalCertificate = $env:DOTNET_GENERATE_ASPNET_CERTIFICATE
+    $originalToolPath = $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH
+    try {
+        $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'true'
+        $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'true'
+        Set-Item Function:Invoke-BrainNative {
+            param($FilePath, [string[]]$Arguments, $WorkingDirectory)
+            if ((Split-Path $FilePath -Leaf) -ne 'dotnet.exe') { return }
+            Assert-Equal $env:DOTNET_GENERATE_ASPNET_CERTIFICATE 'false' 'Publish skips generation of a development certificate'
+            Assert-Equal $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH 'false' 'Publish skips modifying the user PATH'
+            Assert-True ($Arguments -contains '-p:RestoreLockedMode=true') 'Publish requires the existing NuGet lock file'
+            throw 'simulated publish failure'
+        }
+        Assert-Throws { Invoke-BrainBuildRelease $testRoot $sourceRepo $testRoot $testRoot 'x64' } 'simulated publish failure'
+        Assert-Equal $env:DOTNET_GENERATE_ASPNET_CERTIFICATE 'true' 'Publish failure restores original certificate setting'
+        Assert-Equal $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH 'true' 'Publish failure restores original tools PATH setting'
+    } finally {
+        Set-Item Function:Invoke-BrainNative $nativeOriginal
+        $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = $originalCertificate
+        $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = $originalToolPath
+    }
 
     # Simulate only OS process/HTTP/build boundaries, keeping state and transaction real.
     New-Item $data -ItemType Directory -Force | Out-Null

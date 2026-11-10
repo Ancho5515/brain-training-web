@@ -115,16 +115,33 @@ function Invoke-BrainBuildRelease {
     param([string]$StageDir, [string]$RepoDir, [string]$NodeHome, [string]$DotnetHome, [string]$Architecture)
     $client = Join-Path $RepoDir 'client'; $project = Join-Path $RepoDir 'server/BrainTraining.Server.csproj'
     if (-not (Test-Path -LiteralPath (Join-Path $client 'package-lock.json') -PathType Leaf)) { throw 'client/package-lock.json is required for reproducible npm ci.' }
-    $oldPath = $env:PATH; $oldDotnetRoot = $env:DOTNET_ROOT; $oldMultilevel = $env:DOTNET_MULTILEVEL_LOOKUP; $oldTelemetry = $env:DOTNET_CLI_TELEMETRY_OPTOUT; $oldFirst = $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE
+    $oldPath = $env:PATH
+    $oldDotnetRoot = $env:DOTNET_ROOT
+    $oldMultilevel = $env:DOTNET_MULTILEVEL_LOOKUP
+    $oldTelemetry = $env:DOTNET_CLI_TELEMETRY_OPTOUT
+    $oldCertificate = $env:DOTNET_GENERATE_ASPNET_CERTIFICATE
+    $oldToolPath = $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH
     try {
-        $env:PATH = "$NodeHome;$DotnetHome;$oldPath"; $env:DOTNET_ROOT = $DotnetHome; $env:DOTNET_MULTILEVEL_LOOKUP = '0'; $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = '1'
+        $env:PATH = "$NodeHome;$DotnetHome;$oldPath"
+        $env:DOTNET_ROOT = $DotnetHome
+        $env:DOTNET_MULTILEVEL_LOOKUP = '0'
+        $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
+        $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = 'false'
+        $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = 'false'
         Invoke-BrainNative (Join-Path $NodeHome 'npm.cmd') @('ci', '--no-audit', '--no-fund') $client
         Invoke-BrainNative (Join-Path $NodeHome 'npm.cmd') @('run', 'build') $client
-        Invoke-BrainNative (Join-Path $DotnetHome 'dotnet.exe') @('publish', $project, '--configuration', 'Release', '--runtime', "win-$Architecture", '--self-contained', 'true', '--output', $StageDir, '-p:UseAppHost=true') $RepoDir
+        Invoke-BrainNative (Join-Path $DotnetHome 'dotnet.exe') @('publish', $project, '--configuration', 'Release', '--runtime', "win-$Architecture", '--self-contained', 'true', '--output', $StageDir, '-p:UseAppHost=true', '-p:RestoreLockedMode=true') $RepoDir
         $dist = Join-Path $client 'dist'; if (-not (Test-Path -LiteralPath (Join-Path $dist 'index.html') -PathType Leaf)) { throw 'Client build did not produce dist/index.html.' }
         $wwwroot = Join-Path $StageDir 'wwwroot'; New-Item $wwwroot -ItemType Directory -Force | Out-Null
         Get-ChildItem -LiteralPath $dist -Force | Copy-Item -Destination $wwwroot -Recurse -Force
-    } finally { $env:PATH = $oldPath; $env:DOTNET_ROOT = $oldDotnetRoot; $env:DOTNET_MULTILEVEL_LOOKUP = $oldMultilevel; $env:DOTNET_CLI_TELEMETRY_OPTOUT = $oldTelemetry; $env:DOTNET_SKIP_FIRST_TIME_EXPERIENCE = $oldFirst }
+    } finally {
+        $env:PATH = $oldPath
+        $env:DOTNET_ROOT = $oldDotnetRoot
+        $env:DOTNET_MULTILEVEL_LOOKUP = $oldMultilevel
+        $env:DOTNET_CLI_TELEMETRY_OPTOUT = $oldTelemetry
+        $env:DOTNET_GENERATE_ASPNET_CERTIFICATE = $oldCertificate
+        $env:DOTNET_ADD_GLOBAL_TOOLS_TO_PATH = $oldToolPath
+    }
 }
 function Read-BrainState {
     param([string]$InstallDir)
@@ -174,12 +191,22 @@ function New-BrainState {
     param([string]$InstallDir, [string]$ReleaseDir, [string]$DataDir, [string]$RepoDir, $Process)
     return [pscustomobject][ordered]@{ schemaVersion = 1; application = 'brain-training-web'; installDir = (Get-BrainFullPath $InstallDir); releaseDir = (Get-BrainFullPath $ReleaseDir); exe = (Join-Path $ReleaseDir 'BrainTraining.Server.exe'); dataDir = (Get-BrainFullPath $DataDir); repoDir = (Get-BrainFullPath $RepoDir); port = 8787; processId = [int]$Process.ProcessId; startTimeUtc = [string]$Process.StartTimeUtc; deployedAtUtc = [DateTime]::UtcNow.ToString('o') }
 }
+function Get-BrainProcessExecutablePath {
+    param([Diagnostics.Process]$Process)
+    $path = $Process.Path
+    # MainModule can be unavailable during startup or from a 32-bit shell.
+    if (-not $path -and $env:OS -eq 'Windows_NT') {
+        $details = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $($Process.Id)" -ErrorAction Stop
+        if ($details) { $path = $details.ExecutablePath }
+    }
+    return $path
+}
 function Get-BrainProcessSnapshot {
     param([int]$ProcessId)
     if ($ProcessId -le 0) { return $null }
     $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
     if (-not $process) { return $null }
-    try { return [pscustomobject]@{ ProcessId = $process.Id; ExecutablePath = $process.Path; StartTimeUtc = $process.StartTime.ToUniversalTime().ToString('o') } }
+    try { return [pscustomobject]@{ ProcessId = $process.Id; ExecutablePath = (Get-BrainProcessExecutablePath $process); StartTimeUtc = $process.StartTime.ToUniversalTime().ToString('o') } }
     catch { throw "Cannot verify process $ProcessId ownership. It will not be stopped." }
 }
 function Test-BrainOwnedProcess {
@@ -230,7 +257,7 @@ function Stop-BrainOwnedServer {
     if (-not (Test-BrainOwnedProcess $State $snapshot $InstallDir)) { throw 'Stored PID no longer identifies this installation. No process was stopped.' }
     # Re-check immediately before stopping to narrow the PID-reuse race.
     $process = Get-Process -Id $snapshot.ProcessId -ErrorAction Stop
-    if ($process.StartTime.ToUniversalTime().ToString('o') -ne $snapshot.StartTimeUtc -or -not (Test-BrainSamePath $process.Path $State.exe)) { throw 'Process changed while checking ownership. No process was stopped.' }
+    if ($process.StartTime.ToUniversalTime().ToString('o') -ne $snapshot.StartTimeUtc -or -not (Test-BrainSamePath (Get-BrainProcessExecutablePath $process) $State.exe)) { throw 'Process changed while checking ownership. No process was stopped.' }
     $process.Kill()
     if (-not $process.WaitForExit(15000)) { throw 'Owned server did not stop within 15 seconds. Deployment aborted.' }
 }
