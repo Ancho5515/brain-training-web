@@ -57,16 +57,19 @@ function Get-BrainSdkArtifact {
 function Install-BrainNode {
     param([string]$InstallDir, [string]$Architecture)
     $version = '24.22.1'; $installHome = Join-Path $InstallDir "tools/node-v$version-win-$Architecture"; $exe = Join-Path $installHome 'node.exe'
-    if (Test-Path -LiteralPath $exe -PathType Leaf) {
-        $actual = & $exe --version
-        if ($LASTEXITCODE -eq 0 -and $actual -eq "v$version") { return $installHome }
-        throw "Cached Node is not the pinned v$version. Rename $installHome and retry."
-    }
-    $name = "node-v$version-win-$Architecture.zip"; $base = "https://nodejs.org/dist/v$version"
-    $expected = Get-BrainChecksum (Invoke-BrainDownload "$base/SHASUMS256.txt") $name 64
-    $cache = Join-Path $InstallDir 'downloads'; New-Item $cache -ItemType Directory -Force | Out-Null
+    $name = "node-v$version-win-$Architecture.zip"
+    $cache = Join-Path $InstallDir 'downloads'
     $zip = Join-Path $cache $name; $stage = Join-Path $InstallDir ('tools/node-staging-' + [Guid]::NewGuid().ToString('N'))
     try {
+        if (Test-Path -LiteralPath $exe -PathType Leaf) {
+            $actual = & $exe --version
+            if ($LASTEXITCODE -eq 0 -and $actual -eq "v$version") { return $installHome }
+            throw "Cached Node is not the pinned v$version. Rename $installHome and retry."
+        }
+
+        $base = "https://nodejs.org/dist/v$version"
+        $expected = Get-BrainChecksum (Invoke-BrainDownload "$base/SHASUMS256.txt") $name 64
+        New-Item -Path $cache -ItemType Directory -Force | Out-Null
         Write-Host "Downloading and verifying Node v$version ($Architecture)."
         Invoke-BrainDownload "$base/$name" $zip; Assert-BrainFileHash $zip $expected 'SHA256'
         Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
@@ -76,23 +79,25 @@ function Install-BrainNode {
         Move-Item -LiteralPath $expanded -Destination $installHome
         return $installHome
     } finally {
+        if (Test-Path -LiteralPath $zip -PathType Leaf) { Remove-Item -LiteralPath $zip -Force }
         if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
     }
 }
 function Install-BrainDotnet {
     param([string]$InstallDir, [string]$Architecture)
     $version = '10.0.403'; $installHome = Join-Path $InstallDir "tools/dotnet-$version-$Architecture"; $exe = Join-Path $installHome 'dotnet.exe'
-    if (Test-Path -LiteralPath $exe -PathType Leaf) {
-        if (Test-Path -LiteralPath (Join-Path $installHome "sdk/$version/dotnet.dll") -PathType Leaf) { return $installHome }
-        throw "Cached .NET SDK is incomplete. Rename $installHome and retry."
-    }
-    $metadata = Invoke-BrainDownload 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json' | ConvertFrom-Json
-    $artifact = Get-BrainSdkArtifact $metadata $version $Architecture
-    if ($artifact.url -notmatch '^https://(builds\.dotnet\.microsoft\.com|dotnetcli\.blob\.core\.windows\.net|download\.visualstudio\.microsoft\.com)/') { throw 'Unexpected .NET artifact host in release metadata.' }
-    $cache = Join-Path $InstallDir 'downloads'; New-Item $cache -ItemType Directory -Force | Out-Null
+    $cache = Join-Path $InstallDir 'downloads'
     $zip = Join-Path $cache "dotnet-sdk-$version-win-$Architecture.zip"; $stage = Join-Path $InstallDir ('tools/dotnet-staging-' + [Guid]::NewGuid().ToString('N'))
     try {
+        if (Test-Path -LiteralPath $exe -PathType Leaf) {
+            if (Test-Path -LiteralPath (Join-Path $installHome "sdk/$version/dotnet.dll") -PathType Leaf) { return $installHome }
+            throw "Cached .NET SDK is incomplete. Rename $installHome and retry."
+        }
+
+        $metadata = Invoke-BrainDownload 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json' | ConvertFrom-Json
+        $artifact = Get-BrainSdkArtifact $metadata $version $Architecture
+        if ($artifact.url -notmatch '^https://(builds\.dotnet\.microsoft\.com|dotnetcli\.blob\.core\.windows\.net|download\.visualstudio\.microsoft\.com)/') { throw 'Unexpected .NET artifact host in release metadata.' }
+        New-Item -Path $cache -ItemType Directory -Force | Out-Null
         Write-Host "Downloading and verifying .NET SDK $version ($Architecture)."
         Invoke-BrainDownload $artifact.url $zip; Assert-BrainFileHash $zip $artifact.hash 'SHA512'
         Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
@@ -101,8 +106,8 @@ function Install-BrainDotnet {
         Move-Item -LiteralPath $stage -Destination $installHome
         return $installHome
     } finally {
+        if (Test-Path -LiteralPath $zip -PathType Leaf) { Remove-Item -LiteralPath $zip -Force }
         if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
-        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
     }
 }
 function Invoke-BrainNative {

@@ -77,21 +77,22 @@ function Get-BrainMinGitArtifact {
 
 function Get-BrainBootstrapGit {
     param([string]$InstallDir, [string]$Architecture)
-    $gitCommand = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
-    if (-not $gitCommand) { $gitCommand = Get-Command 'git' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
-    if ($gitCommand) { return $gitCommand.Source }
+    $asset = Get-BrainMinGitArtifact $Architecture
     $gitHome = Join-Path $InstallDir 'tools/git'
     $gitPath = Join-Path $gitHome 'cmd/git.exe'
-    if (Test-Path -LiteralPath $gitPath -PathType Leaf) { return $gitPath }
-    Write-Host 'Git is missing; downloading official portable MinGit (no administrator access).'
-    $asset = Get-BrainMinGitArtifact $Architecture
-    $expected = $asset.hash
-    $cache = Join-Path $InstallDir 'downloads'; New-Item $cache -ItemType Directory -Force | Out-Null
+    $cache = Join-Path $InstallDir 'downloads'
     $zip = Join-Path $cache $asset.name
     $temporaryHome = Join-Path $InstallDir ('tools/git-staging-' + [Guid]::NewGuid().ToString('N'))
     try {
+        $gitCommand = Get-Command 'git.exe' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if (-not $gitCommand) { $gitCommand = Get-Command 'git' -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1 }
+        if ($gitCommand) { return $gitCommand.Source }
+        if (Test-Path -LiteralPath $gitPath -PathType Leaf) { return $gitPath }
+
+        Write-Host 'Git is missing; downloading official portable MinGit (no administrator access).'
+        New-Item -Path $cache -ItemType Directory -Force | Out-Null
         Invoke-BrainBootstrapDownload $asset.url $zip
-        if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ine $expected) { throw 'MinGit checksum verification failed; archive will not be run.' }
+        if ((Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash -ine $asset.hash) { throw 'MinGit checksum verification failed; archive will not be run.' }
         Write-Host 'MinGit SHA256 verified against the official release checksum.'
         Expand-Archive -LiteralPath $zip -DestinationPath $temporaryHome -Force
         if (-not (Test-Path -LiteralPath (Join-Path $temporaryHome 'cmd/git.exe') -PathType Leaf)) { throw 'MinGit archive is missing cmd/git.exe.' }
@@ -99,8 +100,8 @@ function Get-BrainBootstrapGit {
         Move-Item -LiteralPath $temporaryHome -Destination $gitHome
         return $gitPath
     } finally {
+        if (Test-Path -LiteralPath $zip -PathType Leaf) { Remove-Item -LiteralPath $zip -Force }
         if (Test-Path -LiteralPath $temporaryHome) { Remove-Item -LiteralPath $temporaryHome -Recurse -Force }
-        if (Test-Path -LiteralPath $zip) { Remove-Item -LiteralPath $zip -Force }
     }
 }
 

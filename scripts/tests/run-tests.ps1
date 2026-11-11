@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param()
+param([switch]$VerifyPublish)
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:Passed = 0
@@ -10,8 +10,9 @@ function Assert-Throws { param([scriptblock]$Action, [string]$Pattern) $caught =
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 . (Join-Path $repoRoot 'scripts/common.ps1')
 . (Join-Path $repoRoot 'bootstrap.ps1')
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('brain-deploy-test-' + [Guid]::NewGuid().ToString('N'))
-New-Item $testRoot -ItemType Directory -Force | Out-Null
+$tempRoot = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).ProviderPath
+$testRoot = Join-Path $tempRoot ('brain-deploy-test-' + [Guid]::NewGuid().ToString('N'))
+New-Item -Path $testRoot -ItemType Directory | Out-Null
 try {
     # A different remote or a similarly named directory must never count as this app.
     Assert-True (Test-BrainRepositoryRemote 'https://github.com/Ancho5515/brain-training-web.git') 'Public HTTPS remote accepted'
@@ -94,12 +95,15 @@ if ($WithoutMainModule) {
     Set-Item Function:Invoke-BrainDownload { param($Uri, $OutFile = '') if (-not $script:DownloadFixtures.ContainsKey($Uri)) { throw "Unexpected download URL: $Uri" }; if ($OutFile) { [IO.File]::Copy($script:DownloadFixtures[$Uri], $OutFile, $true) } else { $script:DownloadFixtures[$Uri] } }
     try {
         $nodeInstall = Join-Path $testRoot 'node-install'
+        $nodeZip = Join-Path $nodeInstall 'downloads/node-v24.22.1-win-x64.zip'
         $script:DownloadFixtures[$nodeSumsUri] = ('a' * 64) + '  node-v24.22.1-win-x64.zip'
         Assert-Throws { Install-BrainNode $nodeInstall 'x64' } 'checksum mismatch'
         Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeInstall 'tools/node-v24.22.1-win-x64/node.exe'))) 'Corrupt Node ZIP is never installed'
+        Assert-True (-not (Test-Path -LiteralPath $nodeZip)) 'Failed Node installation removes its ZIP'
         $script:DownloadFixtures[$nodeSumsUri] = (Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash + '  node-v24.22.1-win-x64.zip'
         $nodeHome = Install-BrainNode $nodeInstall 'x64'
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $nodeHome 'node.exe'))) 'node-archive-marker' 'Verified Node ZIP is extracted into the pinned user directory'
+        Assert-True (-not (Test-Path -LiteralPath $nodeZip)) 'Successful Node installation removes its ZIP'
         $sdkSource = Join-Path $testRoot 'sdk-fixture'; New-Item (Join-Path $sdkSource 'sdk/10.0.403') -ItemType Directory -Force | Out-Null
         [IO.File]::WriteAllText((Join-Path $sdkSource 'sdk/10.0.403/dotnet.dll'), 'sdk-archive-marker')
         [IO.File]::WriteAllText((Join-Path $sdkSource 'dotnet.exe'), 'host-marker')
@@ -113,10 +117,23 @@ if ($WithoutMainModule) {
         $script:DownloadFixtures['https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json'] = '{"releases":[{"sdk":{"version":"10.0.403","files":[{"name":"dotnet-sdk-win-arm64.zip","rid":"win-arm64","url":"' + $sdkZipUri + '","hash":"' + (Get-FileHash -LiteralPath $sdkArchive -Algorithm SHA512).Hash + '"}]}}]}'
         $sdkHome = Install-BrainDotnet $sdkInstall 'arm64'
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $sdkHome 'sdk/10.0.403/dotnet.dll'))) 'sdk-archive-marker' 'Verified SDK ZIP is extracted into the pinned native directory'
+        $sdkZip = Join-Path $sdkInstall 'downloads/dotnet-sdk-10.0.403-win-arm64.zip'
+        [IO.File]::WriteAllText($sdkZip, 'leftover')
+        Assert-Equal (Install-BrainDotnet $sdkInstall 'arm64') $sdkHome 'Cached SDK is reused'
+        Assert-True (-not (Test-Path -LiteralPath $sdkZip)) 'Reusing an SDK removes its leftover ZIP'
     } finally { Set-Item Function:Invoke-BrainDownload $downloadOriginal }
 
     # Real git repositories test selection and fast-forward policy; no network needed.
     $git = (Get-Command git -ErrorAction Stop).Source
+    $gitDownloads = Join-Path $install 'downloads'
+    New-Item -Path $gitDownloads -ItemType Directory | Out-Null
+    $minGitZip = Join-Path $gitDownloads (Get-BrainMinGitArtifact 'x64').name
+    $unrelatedZip = Join-Path $gitDownloads 'unrelated.zip'
+    [IO.File]::WriteAllText($minGitZip, 'leftover')
+    [IO.File]::WriteAllText($unrelatedZip, 'keep')
+    Get-BrainBootstrapGit $install 'x64' | Out-Null
+    Assert-True (-not (Test-Path -LiteralPath $minGitZip)) 'Reusing Git removes its leftover MinGit ZIP'
+    Assert-True (Test-Path -LiteralPath $unrelatedZip -PathType Leaf) 'Archive cleanup preserves unrelated downloads'
     $sourceRepo = Join-Path $testRoot 'source-repo'; New-Item $sourceRepo -ItemType Directory | Out-Null
     & $git -C $sourceRepo init -q; & $git -C $sourceRepo remote add origin 'https://github.com/Ancho5515/brain-training-web.git'
     New-Item (Join-Path $sourceRepo 'client') -ItemType Directory | Out-Null
@@ -260,5 +277,22 @@ param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [sw
     Assert-True (-not (Test-Path -LiteralPath (Join-Path $freshInstall 'state/current.json'))) 'Failed first deployment cannot publish a healthy state'
     Assert-Equal $script:ListenerIds.Count 0 'Failed first deployment stops its candidate'
     Assert-Equal ([IO.File]::ReadAllText($freshSentinel)) 'keep-on-failure' 'Failed first deployment retains existing data'
-    Write-Host ("PASS: {0} deployment assertions" -f $script:Passed)
-} finally { Remove-Item $testRoot -Recurse -Force }
+
+    if ($VerifyPublish) {
+        $dotnet = Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
+        $project = Join-Path $repoRoot 'server/BrainTraining.Server.csproj'
+        $artifacts = Join-Path $testRoot 'artifacts'
+        foreach ($runtime in @('win-x64', 'win-arm64')) {
+            $output = Join-Path $testRoot "publish/$runtime"
+            Invoke-BrainNative $dotnet @('publish', $project, '-c', 'Release', '-r', $runtime, '--self-contained', 'true', '--artifacts-path', $artifacts, '-o', $output, '-p:RestoreLockedMode=true') $repoRoot
+            Assert-True (Test-Path -LiteralPath (Join-Path $output 'BrainTraining.Server.exe') -PathType Leaf) "Self-contained $runtime executable was published"
+        }
+    }
+} finally {
+    $directory = Get-Item -LiteralPath $testRoot -Force
+    if (-not (Test-BrainChildPath $directory.FullName $tempRoot) -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing to clean a test directory outside the temporary workspace: $testRoot"
+    }
+    Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+}
+Write-Host ("PASS: {0} deployment assertions" -f $script:Passed)

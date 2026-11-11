@@ -20,6 +20,8 @@
 
 缺少 Git 时，脚本从 Git for Windows 官方发布页下载本机架构的 portable MinGit **2.56.0.4** ZIP，并按该官方发布中公开的固定 SHA256 校验；不依赖匿名 GitHub API 配额。Node 固定为 **24.22.1**，按官方 `SHASUMS256.txt` 核验 SHA256；.NET SDK 固定为 **10.0.403**，按 Microsoft 官方 10.0 发布元数据核验 SHA512。Node 和 .NET 缺少校验值或校验失败时直接终止。工具不加入系统 PATH，不安装到系统目录。Git、Node、.NET 和 npm 依赖遵循各自许可，仓库的 MIT 许可不替代第三方许可。
 
+工具安装成功或失败时，脚本都会删除对应的下载 ZIP。复用已解压工具或系统 Git 时，也会清理该工具的残留 ZIP。
+
 构建执行 `client` 的 `npm ci` 和 `npm run build`，再将服务端发布为本机架构的 self-contained `win-x64` 或 `win-arm64` 应用，并把 `client/dist` 复制到发布目录的 `wwwroot`。发布后不需要预装 .NET Runtime，也不需要手机/iPad联网访问 CDN。
 
 成功后，主机浏览器打开：
@@ -115,7 +117,9 @@ Windows 防火墙可能首次提示是否允许访问。可信局域网请将网
 & .\scripts\tests\run-tests.ps1
 ```
 
-在 Windows x64 的 Windows PowerShell 5.1 已通过 6 个脚本的 AST 解析和 106 项部署断言。断言覆盖源码选择、版本和哈希校验、PID 复用、端口冲突、构建失败、健康失败回滚及数据路径保持，包含跨位数进程识别检查。
+如需实际验证两种架构的自包含发布，请使用与 `global.json` 匹配的 .NET SDK 运行 `& .\scripts\tests\run-tests.ps1 -VerifyPublish`。双架构发布、重复部署和回滚测试共用一次验收的独立临时目录，测试成功或失败退出时均自动清理。
+
+在 Windows x64 的 Windows PowerShell 5.1 已通过 6 个脚本的 AST 解析和包含双架构发布的 114 项部署断言。断言覆盖源码选择、版本和哈希校验、ZIP 清理、PID 复用、端口冲突、构建失败、健康失败回滚及数据路径保持，包含跨位数进程识别检查。
 
 使用固定 Node 和 .NET SDK，在 Windows x64 上对已有源码执行一键发布。64 位和 32 位 Windows PowerShell 入口均能启动原生 x64 服务。脚本退出后，浏览器可从 8787 访问，重复发布保留原设备凭证、两个账号和已保存记录。另用隔离的实际进程、HTTP 和 SQLite 验证了健康失败回滚并读回原训练记录。
 
