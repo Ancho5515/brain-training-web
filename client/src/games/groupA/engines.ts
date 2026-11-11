@@ -80,10 +80,23 @@ function reflect(position: number, low: number, high: number) {
 }
 export const trackingPosition = (ball: TrackingBall, seconds: number) => ({ x: reflect(ball.x + ball.vx * seconds, 7, 93), y: reflect(ball.y + ball.vy * seconds, 9, 91) });
 
-export function generateCount(level: number, seed: number) {
-  const l = levelOf(level), rng = seeded(seed), answer = 3 + Math.floor((l - 1) * 0.4), distractors = 2 + Math.floor(l / 3);
-  const shapes = shuffle([...Array<number>(answer).fill(0), ...indices(distractors).map(() => randInt(rng, 1, 2))], rng);
-  return { items: shapes.map(shape => ({ shape, size: randInt(rng, 27, 40), color: randInt(rng, 0, 2) })), answer, exposureMs: 2100 - 35 * l };
+export function generateCount(level: number, seed: number, previousCount?: number) {
+  const l = levelOf(level), rng = seeded(seed);
+  const min = 2 + Math.floor((l - 1) * 0.4);
+  const counts = indices(4).map(i => min + i).filter(count => count !== previousCount);
+  const answer = counts[randInt(rng, 0, counts.length - 1)];
+  const distractors = indices(2 + Math.floor(l / 3)).map(i => i < 2 ? i + 1 : randInt(rng, 1, 2));
+  const shapes = shuffle([...Array<number>(answer).fill(0), ...distractors], rng);
+  const columns = 7, rows = 5;
+  const slots = shuffle(indices(columns * rows), rng);
+  const items = shapes.map((shape, i) => ({
+    shape,
+    x: (slots[i] % columns + 0.4 + rng() * 0.2) * 100 / columns,
+    y: (Math.floor(slots[i] / columns) + 0.4 + rng() * 0.2) * 100 / rows,
+    size: randInt(rng, 82, 100) / 10,
+    color: randInt(rng, 0, 2),
+  }));
+  return { items, answer, exposureMs: 2100 - 35 * l };
 }
 export function generateTracking(level: number, seed: number) {
   const l = levelOf(level), rng = seeded(seed), count = 3 + Math.floor((l - 1) / 5), travelMs = 2600 + 70 * l;

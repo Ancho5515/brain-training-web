@@ -67,6 +67,18 @@ describe('group A seeded generation at all 30 levels', () => {
     }
     expect(generateSchulte(30,42).timeMs).toBeLessThan(generateSchulte(1,42).timeMs);
   });
+  it('varies the number of circles at one difficulty', () => {
+    const answers = Array.from({length: 32}, (_, seed) => generateCount(1, seed).answer);
+    expect(new Set(answers)).toEqual(new Set([2, 3, 4, 5]));
+  });
+  it('avoids repeating the preceding count and keeps the answer equal to the drawn circles', () => {
+    for (const level of [1, 15, 30]) {
+      const first = generateCount(level, 42);
+      const next = generateCount(level, 42, first.answer);
+      expect(next.answer).not.toBe(first.answer);
+      expect(next.answer).toBe(countDots(next.items));
+    }
+  });
   it('generates bounded, deterministic tasks with real targets and distractors', () => {
     for (let level=1;level<=30;level++) for (const seed of [1,42,991]) {
       const dots=generateCount(level,seed);

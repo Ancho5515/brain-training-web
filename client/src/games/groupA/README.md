@@ -1,12 +1,12 @@
 # Games 1–14
 
-Original React exercises and deterministic generators. No upstream implementation or image assets were copied. Each registry component produces one exercise; the host combines three exercises into a saved run. The seed and level determine all target stimuli. Changing either remounts a fresh exercise.
+练习界面、题目生成和图形均为原创。每个组件负责一道练习，由宿主汇总三回合成绩。难度和随机种子决定题目，瞬时记忆还参考前一回合的答案。切换难度或种子时重新加载本回合。
 
 `l` below is the integer level clamped to 1–30. Formula changes affect presentation, amount of information, interference, angle or response time; touch hit areas remain at least 44 px. These are independent project parameters, not a reproduction of an upstream scoring scheme.
 
 | ID | Core rule and level parameters | Accuracy |
 |---|---|---|
-| 1 瞬时记忆 | Count only circles. Targets `3+floor((l−1)×0.4)`, distractors `2+floor(l/3)`, exposure `2100−35l` ms. | `max(0,1−absolute count error/target count)` |
+| 1 瞬时记忆 | 只数圆点。第 `l` 级从 `2+floor((l−1)×0.4)` 起随机取四个连续整数之一，排除上一回合的答案。三角形和方形合计 `2+floor(l/3)` 个，图案散布在画面上，展示 `2100−35l` 毫秒。 | `max(0,1−绝对计数误差/圆点数量)` |
 | 2 视觉追踪 | One red target turns blue; all balls move, then selection unlocks. Balls `3+floor((l−1)/5)`, speed `11+0.8l` percent/sec, motion `2600+70l` ms. Positions derive from elapsed time with boundary reflection. | Correct identity 0/1 |
 | 3 舒尔特方格 | Always 1–30 in cells spanning 2/3/4 units. Mental search for `42000−650l` ms, then last number is self-reported. | Last found / 30; explicitly tagged self-reported |
 | 4 图形序列 | Repeating shapes only, with color and size distractors. Period `2+floor((l−1)/7)`; size interference increases each level. | Correct next shape 0/1 |

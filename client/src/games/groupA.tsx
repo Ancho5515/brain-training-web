@@ -64,11 +64,33 @@ function NumberAnswer({ label, onSubmit, min, max }: { label: string; onSubmit: 
 }
 function CardGlyph({ card, size = 45 }: { card: Card; size?: number }) { return <Glyph shape={card.shape} striped={card.striped} rotation={card.rotation} size={size} />; }
 
+const flashColors = ['#90e3bd', '#ffc58b', '#b4c6ff'];
+
 function FlashCount(props: GameProps) {
-  const task = useMemo(() => generateCount(props.level, props.seed), [props.level, props.seed]);
+  const previous = props.previousResult?.metrics?.expectedCount;
+  const task = useMemo(() => generateCount(props.level, props.seed, typeof previous === 'number' ? previous : undefined), [props.level, props.seed, previous]);
   const { stage, start, interrupted } = usePresentation(task.exposureMs), finish = useRound(props);
-  return <GameFrame title="瞬时记忆" instructions="短暂画面中只数圆点，三角形和方形都不算。画面消失后填写圆点数量。">
-    {stage === 'ready' ? <Ready onStart={start} interrupted={interrupted} text="开始闪现" /> : stage === 'show' ? <div aria-label="计数画面" className="game-grid" style={gridStyle(task.items.length > 12 ? 6 : 4)}>{task.items.map((item, i) => <div className="tile" key={i}><Glyph shape={item.shape} color={COLORS[item.color]} size={item.size} /></div>)}</div> : <NumberAnswer label="刚才有几个圆点？" min={0} max={99} onSubmit={answer => finish(Math.max(0, 1 - Math.abs(answer - task.answer) / task.answer), { expectedCount: task.answer, answerCount: answer, absoluteError: Math.abs(answer - task.answer), exposureMs: task.exposureMs })} />}
+  function submit(answer: number) {
+    const absoluteError = Math.abs(answer - task.answer);
+    finish(Math.max(0, 1 - absoluteError / task.answer), {
+      parameterVersion: 'flash-count-2', expectedCount: task.answer, answerCount: answer, absoluteError, exposureMs: task.exposureMs,
+    });
+  }
+  return <GameFrame title="瞬时记忆" instructions="只记圆点的数量，忽略三角形和方形。图案消失后，再填写你看到的圆点数。">
+    <div className="flash-board" role={stage === 'show' ? 'group' : undefined} aria-label={stage === 'show' ? '计数画面' : undefined}>
+      {stage === 'ready' ? <div className="flash-ready">
+        <div className="flash-rule" aria-hidden="true">
+          <span><Glyph shape={0} color={flashColors[0]} size={34} />记数量</span>
+          <span><Glyph shape={1} color={flashColors[1]} size={34} /><Glyph shape={2} color={flashColors[2]} size={34} />忽略</span>
+        </div>
+        {interrupted && <p className="muted">刚才的展示被中断，请重新观察本题。</p>}
+        <button className="primary" onClick={start}>开始闪现</button>
+      </div> : stage === 'show' ? task.items.map((item, i) => (
+        <span className="flash-item" key={i} style={{ left: `${item.x}%`, top: `${item.y}%`, width: `${item.size}%` }}>
+          <Glyph shape={item.shape} color={flashColors[item.color]} />
+        </span>
+      )) : <NumberAnswer label="刚才有几个圆点？" min={0} max={99} onSubmit={submit} />}
+    </div>
   </GameFrame>;
 }
 
