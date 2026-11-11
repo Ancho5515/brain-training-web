@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 [CmdletBinding()]
-param([switch]$VerifyPublish)
+param([switch]$VerifyPublish, [string]$ToolsDir = '')
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
 $script:Passed = 0
@@ -8,12 +8,20 @@ function Assert-True { param([bool]$Condition, [string]$Message) if (-not $Condi
 function Assert-Equal { param($Actual, $Expected, [string]$Message) Assert-True ($Actual -ceq $Expected) "$Message (actual '$Actual', expected '$Expected')" }
 function Assert-Throws { param([scriptblock]$Action, [string]$Pattern) $caught = $false; try { & $Action } catch { $caught = $true; Assert-True ($_.Exception.Message -match $Pattern) "Expected failure matching '$Pattern', got '$($_.Exception.Message)'" }; Assert-True $caught "Expected failure '$Pattern'" }
 $repoRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
-. (Join-Path $repoRoot 'scripts/common.ps1')
-. (Join-Path $repoRoot 'bootstrap.ps1')
-$tempRoot = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).ProviderPath
-$testRoot = Join-Path $tempRoot ('brain-deploy-test-' + [Guid]::NewGuid().ToString('N'))
-New-Item -Path $testRoot -ItemType Directory | Out-Null
+$acceptanceToolsDir = $ToolsDir
+$logDir = Join-Path $repoRoot 'logs/acceptance'
+New-Item -Path $logDir -ItemType Directory -Force | Out-Null
+$runId = [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss-fff') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+$logPath = Join-Path $logDir "deploy-$runId.log"
+$testRoot = $null
+$completed = $false
+Start-Transcript -LiteralPath $logPath -NoClobber | Out-Host
 try {
+    . (Join-Path $repoRoot 'scripts/common.ps1')
+    . (Join-Path $repoRoot 'bootstrap.ps1')
+    $tempRoot = (Resolve-Path -LiteralPath ([IO.Path]::GetTempPath())).ProviderPath
+    $testRoot = (New-Item -Path (Join-Path $tempRoot "brain-deploy-test-$runId") -ItemType Directory).FullName
+    Write-Host "Temporary acceptance directory: $testRoot"
     # A different remote or a similarly named directory must never count as this app.
     Assert-True (Test-BrainRepositoryRemote 'https://github.com/Ancho5515/brain-training-web.git') 'Public HTTPS remote accepted'
     Assert-True (Test-BrainRepositoryRemote 'git@github.com:Ancho5515/brain-training-web.git') 'Equivalent SSH remote accepted'
@@ -89,24 +97,31 @@ if ($WithoutMainModule) {
     $nodeSource = Join-Path $testRoot 'node-fixture/node-v24.22.1-win-x64'
     New-Item $nodeSource -ItemType Directory -Force | Out-Null
     [IO.File]::WriteAllText((Join-Path $nodeSource 'node.exe'), 'node-archive-marker')
+    [IO.File]::WriteAllText((Join-Path $nodeSource 'npm.cmd'), 'npm-archive-marker')
     $nodeArchive = Join-Path $testRoot 'node-fixture.zip'; Compress-Archive -LiteralPath $nodeSource -DestinationPath $nodeArchive
     $nodeSumsUri = 'https://nodejs.org/dist/v24.22.1/SHASUMS256.txt'; $nodeZipUri = 'https://nodejs.org/dist/v24.22.1/node-v24.22.1-win-x64.zip'
     $script:DownloadFixtures[$nodeZipUri] = $nodeArchive
     Set-Item Function:Invoke-BrainDownload { param($Uri, $OutFile = '') if (-not $script:DownloadFixtures.ContainsKey($Uri)) { throw "Unexpected download URL: $Uri" }; if ($OutFile) { [IO.File]::Copy($script:DownloadFixtures[$Uri], $OutFile, $true) } else { $script:DownloadFixtures[$Uri] } }
     try {
         $nodeInstall = Join-Path $testRoot 'node-install'
+        $nodeSharedTools = Join-Path $testRoot 'shared-node-tools'
         $nodeZip = Join-Path $nodeInstall 'downloads/node-v24.22.1-win-x64.zip'
         $script:DownloadFixtures[$nodeSumsUri] = ('a' * 64) + '  node-v24.22.1-win-x64.zip'
-        Assert-Throws { Install-BrainNode $nodeInstall 'x64' } 'checksum mismatch'
-        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeInstall 'tools/node-v24.22.1-win-x64/node.exe'))) 'Corrupt Node ZIP is never installed'
+        Assert-Throws { Install-BrainNode $nodeInstall 'x64' $nodeSharedTools } 'checksum mismatch'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeSharedTools 'node-v24.22.1-win-x64/node.exe'))) 'Corrupt Node ZIP is never installed'
         Assert-True (-not (Test-Path -LiteralPath $nodeZip)) 'Failed Node installation removes its ZIP'
         $script:DownloadFixtures[$nodeSumsUri] = (Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash + '  node-v24.22.1-win-x64.zip'
-        $nodeHome = Install-BrainNode $nodeInstall 'x64'
+        $nodeHome = Install-BrainNode $nodeInstall 'x64' $nodeSharedTools
+        Assert-Equal $nodeHome (Join-Path $nodeSharedTools 'node-v24.22.1-win-x64') 'Missing Node is installed once in the shared tool directory'
         Assert-Equal ([IO.File]::ReadAllText((Join-Path $nodeHome 'node.exe'))) 'node-archive-marker' 'Verified Node ZIP is extracted into the pinned user directory'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeInstall 'tools'))) 'Shared Node leaves no per-install tool copy'
         Assert-True (-not (Test-Path -LiteralPath $nodeZip)) 'Successful Node installation removes its ZIP'
         $sdkSource = Join-Path $testRoot 'sdk-fixture'; New-Item (Join-Path $sdkSource 'sdk/10.0.403') -ItemType Directory -Force | Out-Null
         [IO.File]::WriteAllText((Join-Path $sdkSource 'sdk/10.0.403/dotnet.dll'), 'sdk-archive-marker')
-        [IO.File]::WriteAllText((Join-Path $sdkSource 'dotnet.exe'), 'host-marker')
+        $armHeader = [byte[]]::new(70)
+        $armHeader[0] = 0x4d; $armHeader[1] = 0x5a; $armHeader[60] = 64
+        $armHeader[64] = 0x50; $armHeader[65] = 0x45; $armHeader[68] = 0x64; $armHeader[69] = 0xaa
+        [IO.File]::WriteAllBytes((Join-Path $sdkSource 'dotnet.exe'), $armHeader)
         $sdkArchive = Join-Path $testRoot 'sdk-fixture.zip'; Compress-Archive -Path (Join-Path $sdkSource '*') -DestinationPath $sdkArchive
         $sdkZipUri = 'https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.403/dotnet-sdk-10.0.403-win-arm64.zip'
         $script:DownloadFixtures[$sdkZipUri] = $sdkArchive
@@ -121,6 +136,14 @@ if ($WithoutMainModule) {
         [IO.File]::WriteAllText($sdkZip, 'leftover')
         Assert-Equal (Install-BrainDotnet $sdkInstall 'arm64') $sdkHome 'Cached SDK is reused'
         Assert-True (-not (Test-Path -LiteralPath $sdkZip)) 'Reusing an SDK removes its leftover ZIP'
+        $sharedTools = Join-Path $sdkInstall 'tools'
+        Assert-Equal (Find-BrainBuildTool 'dotnet' 'arm64' $sharedTools) $sdkHome 'An existing shared SDK is selected without another installation'
+        Push-Location -LiteralPath $sdkInstall
+        try { Assert-Equal (Find-BrainBuildTool 'dotnet' 'arm64' '.\tools') $sdkHome 'Relative tool directories use the current PowerShell location' }
+        finally { Pop-Location }
+        $armHeader[68] = 0x64; $armHeader[69] = 0x86
+        [IO.File]::WriteAllBytes((Join-Path $sdkHome 'dotnet.exe'), $armHeader)
+        Assert-Throws { Install-BrainDotnet $sdkInstall 'arm64' } 'incomplete|architecture'
     } finally { Set-Item Function:Invoke-BrainDownload $downloadOriginal }
 
     # Real git repositories test selection and fast-forward policy; no network needed.
@@ -150,8 +173,8 @@ if ($WithoutMainModule) {
     New-Item (Join-Path $sourceRepo 'scripts') -ItemType Directory | Out-Null
     @'
 [CmdletBinding()]
-param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [switch]$NoBrowser)
-[pscustomobject]@{ repoDir = $RepoDir; dataDir = $DataDir; architecture = $Architecture } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallDir 'deployment-probe.json') -Encoding UTF8
+param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [switch]$NoBrowser, [string]$ToolsDir)
+[pscustomobject]@{ repoDir = $RepoDir; dataDir = $DataDir; architecture = $Architecture; toolsDir = $ToolsDir } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $InstallDir 'deployment-probe.json') -Encoding UTF8
 '@ | Set-Content -LiteralPath (Join-Path $sourceRepo 'scripts/deploy.ps1') -Encoding UTF8
     $originalOs = $env:OS; $originalArchitecture = $env:PROCESSOR_ARCHITECTURE; $originalNativeArchitecture = $env:PROCESSOR_ARCHITEW6432
     $script:BootstrapGitOriginal = (Get-Command Invoke-BrainBootstrapGit).ScriptBlock
@@ -179,12 +202,16 @@ param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [sw
             return & $script:BootstrapGitOriginal $Git $Arguments
         }
         $freshBootstrap = Join-Path $testRoot 'fresh-bootstrap'
-        Push-Location -LiteralPath $testRoot
-        try { Invoke-BrainBootstrap -InstallDir $freshBootstrap -NoBrowser } finally { Pop-Location }
+        # TEMP can be inside a checkout. Start discovery at the volume root.
+        $freshWorkingDir = [IO.Path]::GetPathRoot($testRoot)
+        if (Test-Path -LiteralPath (Join-Path $freshWorkingDir '.git')) { throw 'Fresh-install fixture requires a directory outside a Git checkout.' }
+        Push-Location -LiteralPath $freshWorkingDir
+        try { Invoke-BrainBootstrap -InstallDir $freshBootstrap -ToolsDir $sharedTools -NoBrowser } finally { Pop-Location }
         $probe = Get-Content -LiteralPath (Join-Path $freshBootstrap 'deployment-probe.json') -Raw | ConvertFrom-Json
         Assert-Equal $script:CloneRequestedUrl 'https://github.com/Ancho5515/brain-training-web.git' 'Fresh bootstrap requests the public repository'
         Assert-Equal $probe.repoDir (Join-Path $freshBootstrap 'repo') 'Fresh bootstrap promotes a complete clone into stable repo directory'
         Assert-Equal $probe.architecture 'x64' 'Public entry forwards detected native architecture'
+        Assert-Equal $probe.toolsDir $sharedTools 'Public entry forwards the selected shared tool directory'
         Assert-Equal (Assert-BrainCheckout $git $probe.repoDir) $probe.repoDir 'Fresh checkout is verified before build boundary'
     } finally {
         Set-Item Function:Invoke-BrainBootstrapGit $script:BootstrapGitOriginal
@@ -279,20 +306,42 @@ param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [sw
     Assert-Equal ([IO.File]::ReadAllText($freshSentinel)) 'keep-on-failure' 'Failed first deployment retains existing data'
 
     if ($VerifyPublish) {
-        $dotnet = Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
+        if ($env:OS -eq 'Windows_NT') {
+            $sdkDir = Find-BrainBuildTool 'dotnet' (Get-BrainArchitecture) $acceptanceToolsDir
+            if (-not $sdkDir) { throw 'A compatible .NET SDK was not found. Add it to PATH or supply -ToolsDir.' }
+            $dotnet = Join-Path $sdkDir 'dotnet.exe'
+        } else {
+            $dotnet = Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source
+        }
+        Write-Host "Publishing with .NET SDK: $dotnet"
         $project = Join-Path $repoRoot 'server/BrainTraining.Server.csproj'
         $artifacts = Join-Path $testRoot 'artifacts'
         foreach ($runtime in @('win-x64', 'win-arm64')) {
             $output = Join-Path $testRoot "publish/$runtime"
-            Invoke-BrainNative $dotnet @('publish', $project, '-c', 'Release', '-r', $runtime, '--self-contained', 'true', '--artifacts-path', $artifacts, '-o', $output, '-p:RestoreLockedMode=true') $repoRoot
-            Assert-True (Test-Path -LiteralPath (Join-Path $output 'BrainTraining.Server.exe') -PathType Leaf) "Self-contained $runtime executable was published"
+            Invoke-BrainNative $dotnet @('publish', $project, '-c', 'Release', '-r', $runtime, '--self-contained', 'true', '--artifacts-path', $artifacts, '-o', $output, '-p:RestoreLockedMode=true', '--disable-build-servers') $repoRoot
+            Assert-Equal (Get-BrainExecutableArchitecture (Join-Path $output 'BrainTraining.Server.exe')) $runtime.Substring(4) "Self-contained $runtime executable has the requested architecture"
+            Assert-Equal (Get-BrainExecutableArchitecture (Join-Path $output 'e_sqlite3.dll')) $runtime.Substring(4) "SQLite is native to $runtime"
         }
     }
+    $completed = $true
+} catch {
+    Write-Host "FAIL: $($_.Exception.Message)"
+    throw
 } finally {
-    $directory = Get-Item -LiteralPath $testRoot -Force
-    if (-not (Test-BrainChildPath $directory.FullName $tempRoot) -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
-        throw "Refusing to clean a test directory outside the temporary workspace: $testRoot"
+    try {
+        if ($testRoot -and (Test-Path -LiteralPath $testRoot -PathType Container)) {
+            $directory = Get-Item -LiteralPath $testRoot -Force
+            if (-not (Test-BrainSamePath (Split-Path -Parent $directory.FullName) $tempRoot) -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+                throw "Refusing to clean a test directory outside the temporary workspace: $testRoot"
+            }
+            Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+            Write-Host 'Temporary acceptance directory removed.'
+        }
+        if ($completed) { Write-Host ("PASS: {0} deployment assertions" -f $script:Passed) }
+    } catch {
+        Write-Host "FAIL: $($_.Exception.Message)"
+        throw
+    } finally {
+        Stop-Transcript | Out-Null
     }
-    Remove-Item -LiteralPath $directory.FullName -Recurse -Force
 }
-Write-Host ("PASS: {0} deployment assertions" -f $script:Passed)

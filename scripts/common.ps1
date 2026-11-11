@@ -54,17 +54,91 @@ function Get-BrainSdkArtifact {
     }
     throw "Official metadata has no .NET SDK $Version ZIP for win-$Architecture."
 }
-function Install-BrainNode {
-    param([string]$InstallDir, [string]$Architecture)
-    $version = '24.22.1'; $installHome = Join-Path $InstallDir "tools/node-v$version-win-$Architecture"; $exe = Join-Path $installHome 'node.exe'
-    $name = "node-v$version-win-$Architecture.zip"
-    $cache = Join-Path $InstallDir 'downloads'
-    $zip = Join-Path $cache $name; $stage = Join-Path $InstallDir ('tools/node-staging-' + [Guid]::NewGuid().ToString('N'))
+function Get-BrainToolSpec {
+    param([ValidateSet('node', 'dotnet')][string]$Tool, [ValidateSet('x64', 'arm64')][string]$Architecture)
+    if ($Tool -eq 'node') {
+        $version = '24.22.1'
+        $folder = "node-v$version-win-$Architecture"
+        return @{ Version = $version; Folder = $folder; Executable = 'node.exe'; Archive = "$folder.zip" }
+    }
+    $version = '10.0.403'
+    return @{ Version = $version; Folder = "dotnet-$version-$Architecture"; Executable = 'dotnet.exe'; Archive = "dotnet-sdk-$version-win-$Architecture.zip" }
+}
+function Get-BrainToolsDir {
+    param([string]$ToolsDir)
+    if ($ToolsDir) {
+        $absolute = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ToolsDir)
+        return Get-BrainFullPath $absolute
+    }
+    if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is missing. Supply -ToolsDir with a writable shared tools directory.' }
+    return Join-Path $env:LOCALAPPDATA 'DevTools'
+}
+function Get-BrainExecutableArchitecture {
+    param([string]$Path)
+    $reader = $null
     try {
-        if (Test-Path -LiteralPath $exe -PathType Leaf) {
-            $actual = & $exe --version
-            if ($LASTEXITCODE -eq 0 -and $actual -eq "v$version") { return $installHome }
-            throw "Cached Node is not the pinned v$version. Rename $installHome and retry."
+        $reader = [IO.BinaryReader]::new([IO.File]::OpenRead($Path))
+        if ($reader.ReadUInt16() -ne 0x5a4d) { return $null }
+        $reader.BaseStream.Position = 0x3c
+        $reader.BaseStream.Position = $reader.ReadUInt32()
+        if ($reader.ReadUInt32() -ne 0x4550) { return $null }
+        switch ($reader.ReadUInt16()) {
+            0x8664 { return 'x64' }
+            0xaa64 { return 'arm64' }
+        }
+    } catch { return $null }
+    finally { if ($reader) { $reader.Dispose() } }
+}
+function Test-BrainBuildTool {
+    param([string]$ToolDir, [string]$Tool, [string]$Architecture, $Spec)
+    $exe = Join-Path $ToolDir $Spec.Executable
+    if ((Get-BrainExecutableArchitecture $exe) -ne $Architecture) { return $false }
+    if ($Tool -eq 'dotnet') {
+        return Test-Path -LiteralPath (Join-Path $ToolDir "sdk/$($Spec.Version)/dotnet.dll") -PathType Leaf
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $ToolDir 'npm.cmd') -PathType Leaf)) { return $false }
+    try {
+        $actualVersion = & $exe --version 2>$null
+        return ($LASTEXITCODE -eq 0 -and $actualVersion -eq "v$($Spec.Version)")
+    } catch { return $false }
+}
+function Find-BrainBuildTool {
+    param([string]$Tool, [string]$Architecture, [string]$ToolsDir = '', [string]$InstallDir = '')
+    $spec = Get-BrainToolSpec $Tool $Architecture
+    $candidates = @(
+        if ($ToolsDir) { Join-Path (Get-BrainToolsDir $ToolsDir) $spec.Folder }
+        foreach ($command in @(Get-Command $spec.Executable -CommandType Application -All -ErrorAction SilentlyContinue)) {
+            Split-Path -Parent $command.Source
+        }
+        if ($env:LOCALAPPDATA -and -not $ToolsDir) { Join-Path (Get-BrainToolsDir '') $spec.Folder }
+        if ($InstallDir) { Join-Path $InstallDir "tools/$($spec.Folder)" }
+        if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "BrainTrainingWeb/tools/$($spec.Folder)" }
+    )
+    foreach ($candidate in ($candidates | Select-Object -Unique)) {
+        if (Test-BrainBuildTool $candidate $Tool $Architecture $spec) { return Get-BrainFullPath $candidate }
+    }
+    return $null
+}
+function Remove-BrainToolStage {
+    param([string]$Path, [string]$ToolsDir)
+    if (-not (Test-Path -LiteralPath $Path)) { return }
+    $directory = Get-Item -LiteralPath $Path -Force
+    if (-not (Test-BrainSamePath (Split-Path -Parent $directory.FullName) $ToolsDir) -or ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw "Refusing to clean a tool staging directory outside $ToolsDir."
+    }
+    Remove-Item -LiteralPath $directory.FullName -Recurse -Force
+}
+function Install-BrainNode {
+    param([string]$InstallDir, [string]$Architecture, [string]$ToolsDir = (Join-Path $InstallDir 'tools'))
+    $ToolsDir = Get-BrainFullPath $ToolsDir
+    $spec = Get-BrainToolSpec 'node' $Architecture
+    $version = $spec.Version; $installHome = Join-Path $ToolsDir $spec.Folder; $name = $spec.Archive
+    $cache = Join-Path $InstallDir 'downloads'
+    $zip = Join-Path $cache $name; $stage = Join-Path $ToolsDir ('node-staging-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        if (Test-Path -LiteralPath $installHome) {
+            if (Test-BrainBuildTool $installHome 'node' $Architecture $spec) { return $installHome }
+            throw "Cached Node is incomplete or does not match v$version ($Architecture). Rename $installHome and retry."
         }
 
         $base = "https://nodejs.org/dist/v$version"
@@ -73,25 +147,27 @@ function Install-BrainNode {
         Write-Host "Downloading and verifying Node v$version ($Architecture)."
         Invoke-BrainDownload "$base/$name" $zip; Assert-BrainFileHash $zip $expected 'SHA256'
         Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
-        $expanded = Join-Path $stage "node-v$version-win-$Architecture"
-        if (-not (Test-Path -LiteralPath (Join-Path $expanded 'node.exe') -PathType Leaf)) { throw 'Node ZIP is incomplete.' }
-        if (Test-Path -LiteralPath $installHome) { throw "Incomplete Node installation already exists: $installHome" }
-        Move-Item -LiteralPath $expanded -Destination $installHome
+        $expanded = Join-Path $stage $spec.Folder
+        if (-not (Test-Path -LiteralPath (Join-Path $expanded 'node.exe') -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $expanded 'npm.cmd') -PathType Leaf)) { throw 'Node ZIP is incomplete.' }
+        if (-not (Test-BrainChildPath (Resolve-Path -LiteralPath $expanded).ProviderPath $ToolsDir) -or -not (Test-BrainChildPath $installHome $ToolsDir)) { throw 'Node staging path is outside the tools directory.' }
+        [IO.Directory]::Move($expanded, $installHome)
         return $installHome
     } finally {
         if (Test-Path -LiteralPath $zip -PathType Leaf) { Remove-Item -LiteralPath $zip -Force }
-        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+        Remove-BrainToolStage $stage $ToolsDir
     }
 }
 function Install-BrainDotnet {
-    param([string]$InstallDir, [string]$Architecture)
-    $version = '10.0.403'; $installHome = Join-Path $InstallDir "tools/dotnet-$version-$Architecture"; $exe = Join-Path $installHome 'dotnet.exe'
+    param([string]$InstallDir, [string]$Architecture, [string]$ToolsDir = (Join-Path $InstallDir 'tools'))
+    $ToolsDir = Get-BrainFullPath $ToolsDir
+    $spec = Get-BrainToolSpec 'dotnet' $Architecture
+    $version = $spec.Version; $installHome = Join-Path $ToolsDir $spec.Folder
     $cache = Join-Path $InstallDir 'downloads'
-    $zip = Join-Path $cache "dotnet-sdk-$version-win-$Architecture.zip"; $stage = Join-Path $InstallDir ('tools/dotnet-staging-' + [Guid]::NewGuid().ToString('N'))
+    $zip = Join-Path $cache $spec.Archive; $stage = Join-Path $ToolsDir ('dotnet-staging-' + [Guid]::NewGuid().ToString('N'))
     try {
-        if (Test-Path -LiteralPath $exe -PathType Leaf) {
-            if (Test-Path -LiteralPath (Join-Path $installHome "sdk/$version/dotnet.dll") -PathType Leaf) { return $installHome }
-            throw "Cached .NET SDK is incomplete. Rename $installHome and retry."
+        if (Test-Path -LiteralPath $installHome) {
+            if (Test-BrainBuildTool $installHome 'dotnet' $Architecture $spec) { return $installHome }
+            throw "Cached .NET SDK is incomplete or has the wrong architecture. Rename $installHome and retry."
         }
 
         $metadata = Invoke-BrainDownload 'https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json' | ConvertFrom-Json
@@ -102,12 +178,12 @@ function Install-BrainDotnet {
         Invoke-BrainDownload $artifact.url $zip; Assert-BrainFileHash $zip $artifact.hash 'SHA512'
         Expand-Archive -LiteralPath $zip -DestinationPath $stage -Force
         if (-not (Test-Path -LiteralPath (Join-Path $stage 'dotnet.exe') -PathType Leaf) -or -not (Test-Path -LiteralPath (Join-Path $stage "sdk/$version/dotnet.dll") -PathType Leaf)) { throw '.NET ZIP is incomplete.' }
-        if (Test-Path -LiteralPath $installHome) { throw "Incomplete .NET directory already exists: $installHome" }
-        Move-Item -LiteralPath $stage -Destination $installHome
+        if (-not (Test-BrainChildPath (Resolve-Path -LiteralPath $stage).ProviderPath $ToolsDir) -or -not (Test-BrainChildPath $installHome $ToolsDir)) { throw '.NET staging path is outside the tools directory.' }
+        [IO.Directory]::Move($stage, $installHome)
         return $installHome
     } finally {
         if (Test-Path -LiteralPath $zip -PathType Leaf) { Remove-Item -LiteralPath $zip -Force }
-        if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Recurse -Force }
+        Remove-BrainToolStage $stage $ToolsDir
     }
 }
 function Invoke-BrainNative {

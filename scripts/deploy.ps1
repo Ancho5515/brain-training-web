@@ -6,7 +6,8 @@ param(
     [string]$DataDir = '',
     [ValidateSet('x64', 'arm64')][string]$Architecture = '',
     [switch]$OpenFirewall,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [string]$ToolsDir = ''
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version 2.0
@@ -29,8 +30,25 @@ try {
     if ((Test-BrainSamePath $DataDir $RepoDir) -or (Test-BrainChildPath $DataDir $RepoDir)) { throw 'Use a persistent data directory outside the source checkout.' }
     $snapshot = $null; if ($current) { $snapshot = Get-BrainProcessSnapshot ([int]$current.processId) }
     Assert-BrainPortAvailable @(Get-BrainPortOwners) $current $snapshot $InstallDir
-    $nodeHome = Install-BrainNode $InstallDir $Architecture
-    $dotnetHome = Install-BrainDotnet $InstallDir $Architecture
+    $nodeHome = Find-BrainBuildTool 'node' $Architecture $ToolsDir $InstallDir
+    $dotnetHome = Find-BrainBuildTool 'dotnet' $Architecture $ToolsDir $InstallDir
+    foreach ($tool in @('node', 'dotnet')) {
+        $spec = Get-BrainToolSpec $tool $Architecture
+        $archive = Join-Path $InstallDir "downloads/$($spec.Archive)"
+        if (Test-Path -LiteralPath $archive -PathType Leaf) { Remove-Item -LiteralPath $archive -Force }
+    }
+    if (-not $nodeHome -or -not $dotnetHome) {
+        $toolCache = Get-BrainToolsDir $ToolsDir
+        New-Item -Path $toolCache -ItemType Directory -Force | Out-Null
+        try { $toolLock = [IO.File]::Open((Join-Path $toolCache 'install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+        catch { throw "Cannot acquire the shared tools lock in $toolCache. Retry after other installations finish: $($_.Exception.Message)" }
+        try {
+            if (-not $nodeHome) { $nodeHome = Install-BrainNode $InstallDir $Architecture $toolCache }
+            if (-not $dotnetHome) { $dotnetHome = Install-BrainDotnet $InstallDir $Architecture $toolCache }
+        } finally { $toolLock.Dispose() }
+    }
+    Write-Host "Node: $nodeHome"
+    Write-Host ".NET SDK: $dotnetHome"
     $build = { param($stage) Invoke-BrainBuildRelease $stage $RepoDir $nodeHome $dotnetHome $Architecture }
     $result = Invoke-BrainReleaseTransaction -InstallDir $InstallDir -DataDir $DataDir -RepoDir $RepoDir -BuildAction $build
     if ($OpenFirewall) { Open-BrainFirewall | Out-Null }

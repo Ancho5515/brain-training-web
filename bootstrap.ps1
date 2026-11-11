@@ -10,7 +10,8 @@ param(
     [string]$DataDir = '',
     [switch]$Update,
     [switch]$OpenFirewall,
-    [switch]$NoBrowser
+    [switch]$NoBrowser,
+    [string]$ToolsDir = ''
 )
 
 function Get-BrainBootstrapProperty {
@@ -160,7 +161,7 @@ function Update-BrainCheckout {
 
 function Invoke-BrainBootstrap {
     [CmdletBinding()]
-    param([string]$InstallDir, [string]$RepoDir, [string]$DataDir, [switch]$Update, [switch]$OpenFirewall, [switch]$NoBrowser)
+    param([string]$InstallDir, [string]$RepoDir, [string]$DataDir, [switch]$Update, [switch]$OpenFirewall, [switch]$NoBrowser, [string]$ToolsDir)
     $ErrorActionPreference = 'Stop'
     if ($env:OS -ne 'Windows_NT') { throw 'Run bootstrap.ps1 in Windows PowerShell 5.1 or PowerShell on Windows 10/11.' }
     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -194,12 +195,14 @@ function Invoke-BrainBootstrap {
         }
         $deploy = Join-Path $checkout 'scripts/deploy.ps1'
         if (-not (Test-Path -LiteralPath $deploy -PathType Leaf)) { throw "Missing $deploy. Supply a complete checkout; default deployment never updates source." }
-        & $deploy -InstallDir $InstallDir -RepoDir $checkout -DataDir $DataDir -Architecture $architecture -OpenFirewall:$OpenFirewall -NoBrowser:$NoBrowser
+        $deployParameters = @{ InstallDir = $InstallDir; RepoDir = $checkout; DataDir = $DataDir; Architecture = $architecture; OpenFirewall = $OpenFirewall; NoBrowser = $NoBrowser }
+        if ($ToolsDir) { $deployParameters.ToolsDir = $ToolsDir }
+        & $deploy @deployParameters
     } finally { if ($lock) { $lock.Dispose() } }
 }
 
 # Dot-sourcing exposes the decision helpers for tests without starting deployment.
 # Invoke-Expression and normal script execution both take this entry path.
 if ($MyInvocation.InvocationName -ne '.') {
-    Invoke-BrainBootstrap -InstallDir $InstallDir -RepoDir $RepoDir -DataDir $DataDir -Update:$Update -OpenFirewall:$OpenFirewall -NoBrowser:$NoBrowser
+    Invoke-BrainBootstrap -InstallDir $InstallDir -RepoDir $RepoDir -DataDir $DataDir -Update:$Update -OpenFirewall:$OpenFirewall -NoBrowser:$NoBrowser -ToolsDir $ToolsDir
 }

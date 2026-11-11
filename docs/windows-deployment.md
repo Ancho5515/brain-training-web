@@ -20,6 +20,15 @@
 
 缺少 Git 时，脚本从 Git for Windows 官方发布页下载本机架构的 portable MinGit **2.56.0.4** ZIP，并按该官方发布中公开的固定 SHA256 校验；不依赖匿名 GitHub API 配额。Node 固定为 **24.22.1**，按官方 `SHASUMS256.txt` 核验 SHA256；.NET SDK 固定为 **10.0.403**，按 Microsoft 官方 10.0 发布元数据核验 SHA512。Node 和 .NET 缺少校验值或校验失败时直接终止。工具不加入系统 PATH，不安装到系统目录。Git、Node、.NET 和 npm 依赖遵循各自许可，仓库的 MIT 许可不替代第三方许可。
 
+部署优先复用版本和架构匹配的构建工具。依次查找显式指定的 `-ToolsDir`、当前 `PATH`、默认共享目录和旧安装的 `tools`。传入 `-ToolsDir` 时以它代替默认共享目录，也将缺失的工具安装到该处。默认共享目录是 `%LOCALAPPDATA%\DevTools`。
+
+共享目录下按版本和架构存放工具，例如 `node-v24.22.1-win-x64` 和 `dotnet-10.0.403-x64`。其他项目可选用同一份便携工具，或将所需版本的目录加入其构建进程的 `PATH`。现有部署的便携工具也可直接复用。
+
+```powershell
+& .\bootstrap.ps1 -ToolsDir "$env:LOCALAPPDATA\BrainTrainingWeb\tools"
+& .\scripts\tests\run-tests.ps1 -VerifyPublish -ToolsDir "$env:LOCALAPPDATA\BrainTrainingWeb\tools"
+```
+
 工具安装成功或失败时，脚本都会删除对应的下载 ZIP。复用已解压工具或系统 Git 时，也会清理该工具的残留 ZIP。
 
 构建执行 `client` 的 `npm ci` 和 `npm run build`，再将服务端发布为本机架构的 self-contained `win-x64` 或 `win-arm64` 应用，并把 `client/dist` 复制到发布目录的 `wwwroot`。发布后不需要预装 .NET Runtime，也不需要手机/iPad联网访问 CDN。
@@ -67,7 +76,8 @@ http://localhost:8787
 | 默认目录 | 内容 |
 | --- | --- |
 | `%LOCALAPPDATA%\BrainTrainingWeb\repo` | 首次自动克隆的源码；已有外部源码可直接复用 |
-| `%LOCALAPPDATA%\BrainTrainingWeb\tools` | 当前用户专用 Git、Node、.NET SDK |
+| `%LOCALAPPDATA%\BrainTrainingWeb\tools` | 便携 Git 和仍可复用的旧版便携构建工具 |
+| `%LOCALAPPDATA%\DevTools` | 用户共享的 Node 和 .NET SDK，可通过 `-ToolsDir` 指定其他目录 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\releases\<版本>` | 每次独立的发布文件；包含网页与 self-contained 服务端 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\data` | SQLite 数据库和 Data Protection 密钥，独立于版本目录 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\logs` | 每次后台启动的标准输出及错误日志 |
@@ -117,7 +127,7 @@ Windows 防火墙可能首次提示是否允许访问。可信局域网请将网
 & .\scripts\tests\run-tests.ps1
 ```
 
-如需实际验证两种架构的自包含发布，请使用与 `global.json` 匹配的 .NET SDK 运行 `& .\scripts\tests\run-tests.ps1 -VerifyPublish`。双架构发布、重复部署和回滚测试共用一次验收的独立临时目录，测试成功或失败退出时均自动清理。
+运行 `& .\scripts\tests\run-tests.ps1 -VerifyPublish` 可验证两种架构的自包含发布。验收复用匹配的 .NET SDK，可通过 `-ToolsDir` 选择共享目录。每次运行在独立临时目录保存构建产物、安装副本和测试数据，成功或失败退出时均自动清理，只在仓库的 `logs/acceptance/` 留下一份包含验收结果的 `.log` 文件。
 
 在 Windows x64 的 Windows PowerShell 5.1 已通过 6 个脚本的 AST 解析和包含双架构发布的 114 项部署断言。断言覆盖源码选择、版本和哈希校验、ZIP 清理、PID 复用、端口冲突、构建失败、健康失败回滚及数据路径保持，包含跨位数进程识别检查。
 
