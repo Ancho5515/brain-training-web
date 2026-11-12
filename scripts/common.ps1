@@ -188,9 +188,17 @@ function Install-BrainDotnet {
 }
 function Invoke-BrainNative {
     param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory)
+    $previousEncoding = [Console]::OutputEncoding
     Push-Location -LiteralPath $WorkingDirectory
-    try { & $FilePath @Arguments | Out-Host; if ($LASTEXITCODE -ne 0) { throw "Command failed (exit $LASTEXITCODE): $FilePath $($Arguments -join ' ')" } }
-    finally { Pop-Location }
+    try {
+        # PowerShell decodes piped npm and .NET CLI output using the console encoding.
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        & $FilePath @Arguments | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw "Command failed (exit $LASTEXITCODE): $FilePath $($Arguments -join ' ')" }
+    } finally {
+        [Console]::OutputEncoding = $previousEncoding
+        Pop-Location
+    }
 }
 function Invoke-BrainBuildRelease {
     param([string]$StageDir, [string]$RepoDir, [string]$NodeHome, [string]$DotnetHome, [string]$Architecture)
