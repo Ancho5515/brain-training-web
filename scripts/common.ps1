@@ -64,15 +64,6 @@ function Get-BrainToolSpec {
     $version = '10.0.403'
     return @{ Version = $version; Folder = "dotnet-$version-$Architecture"; Executable = 'dotnet.exe'; Archive = "dotnet-sdk-$version-win-$Architecture.zip" }
 }
-function Get-BrainToolsDir {
-    param([string]$ToolsDir)
-    if ($ToolsDir) {
-        $absolute = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ToolsDir)
-        return Get-BrainFullPath $absolute
-    }
-    if (-not $env:LOCALAPPDATA) { throw 'LOCALAPPDATA is missing. Supply -ToolsDir with a writable shared tools directory.' }
-    return Join-Path $env:LOCALAPPDATA 'DevTools'
-}
 function Get-BrainExecutableArchitecture {
     param([string]$Path)
     $reader = $null
@@ -103,16 +94,25 @@ function Test-BrainBuildTool {
     } catch { return $false }
 }
 function Find-BrainBuildTool {
-    param([string]$Tool, [string]$Architecture, [string]$ToolsDir = '', [string]$InstallDir = '')
+    param([string]$Tool, [string]$Architecture, [string]$ToolsDir = '', [string]$InstallDir = '', [string]$RepoDir = '')
     $spec = Get-BrainToolSpec $Tool $Architecture
+    $sharedTools = $env:DEVTOOLS_ROOT
+    if (-not $sharedTools -and $env:OS -eq 'Windows_NT') {
+        $sharedTools = [Environment]::GetEnvironmentVariable('DEVTOOLS_ROOT', 'User')
+    }
     $candidates = @(
-        if ($ToolsDir) { Join-Path (Get-BrainToolsDir $ToolsDir) $spec.Folder }
+        if ($ToolsDir) {
+            $absolute = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ToolsDir)
+            Join-Path $absolute $spec.Folder
+        }
+        if ($sharedTools -and (Test-Path -LiteralPath $sharedTools -PathType Container)) {
+            Join-Path $sharedTools $spec.Folder
+        }
         foreach ($command in @(Get-Command $spec.Executable -CommandType Application -All -ErrorAction SilentlyContinue)) {
             Split-Path -Parent $command.Source
         }
-        if ($env:LOCALAPPDATA -and -not $ToolsDir) { Join-Path (Get-BrainToolsDir '') $spec.Folder }
+        if ($RepoDir) { Join-Path $RepoDir ".tools/$($spec.Folder)" }
         if ($InstallDir) { Join-Path $InstallDir "tools/$($spec.Folder)" }
-        if ($env:LOCALAPPDATA) { Join-Path $env:LOCALAPPDATA "BrainTrainingWeb/tools/$($spec.Folder)" }
     )
     foreach ($candidate in ($candidates | Select-Object -Unique)) {
         if (Test-BrainBuildTool $candidate $Tool $Architecture $spec) { return Get-BrainFullPath $candidate }

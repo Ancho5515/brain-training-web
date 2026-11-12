@@ -104,17 +104,17 @@ if ($WithoutMainModule) {
     Set-Item Function:Invoke-BrainDownload { param($Uri, $OutFile = '') if (-not $script:DownloadFixtures.ContainsKey($Uri)) { throw "Unexpected download URL: $Uri" }; if ($OutFile) { [IO.File]::Copy($script:DownloadFixtures[$Uri], $OutFile, $true) } else { $script:DownloadFixtures[$Uri] } }
     try {
         $nodeInstall = Join-Path $testRoot 'node-install'
-        $nodeSharedTools = Join-Path $testRoot 'shared-node-tools'
+        $nodeTools = Join-Path $nodeInstall '.tools'
         $nodeZip = Join-Path $nodeInstall 'downloads/node-v24.22.1-win-x64.zip'
         $script:DownloadFixtures[$nodeSumsUri] = ('a' * 64) + '  node-v24.22.1-win-x64.zip'
-        Assert-Throws { Install-BrainNode $nodeInstall 'x64' $nodeSharedTools } 'checksum mismatch'
-        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeSharedTools 'node-v24.22.1-win-x64/node.exe'))) 'Corrupt Node ZIP is never installed'
+        Assert-Throws { Install-BrainNode $nodeInstall 'x64' $nodeTools } 'checksum mismatch'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeTools 'node-v24.22.1-win-x64/node.exe'))) 'Corrupt Node ZIP is never installed'
         Assert-True (-not (Test-Path -LiteralPath $nodeZip)) 'Failed Node installation removes its ZIP'
         $script:DownloadFixtures[$nodeSumsUri] = (Get-FileHash -LiteralPath $nodeArchive -Algorithm SHA256).Hash + '  node-v24.22.1-win-x64.zip'
-        $nodeHome = Install-BrainNode $nodeInstall 'x64' $nodeSharedTools
-        Assert-Equal $nodeHome (Join-Path $nodeSharedTools 'node-v24.22.1-win-x64') 'Missing Node is installed once in the shared tool directory'
-        Assert-Equal ([IO.File]::ReadAllText((Join-Path $nodeHome 'node.exe'))) 'node-archive-marker' 'Verified Node ZIP is extracted into the pinned user directory'
-        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeInstall 'tools'))) 'Shared Node leaves no per-install tool copy'
+        $nodeHome = Install-BrainNode $nodeInstall 'x64' $nodeTools
+        Assert-Equal $nodeHome (Join-Path $nodeTools 'node-v24.22.1-win-x64') 'Missing Node is installed once in the project cache'
+        Assert-Equal ([IO.File]::ReadAllText((Join-Path $nodeHome 'node.exe'))) 'node-archive-marker' 'Verified Node ZIP is extracted into the pinned project directory'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $nodeInstall 'tools'))) 'Project Node leaves no copy in the legacy tools directory'
         Assert-True (-not (Test-Path -LiteralPath $nodeZip)) 'Successful Node installation removes its ZIP'
         $sdkSource = Join-Path $testRoot 'sdk-fixture'; New-Item (Join-Path $sdkSource 'sdk/10.0.403') -ItemType Directory -Force | Out-Null
         [IO.File]::WriteAllText((Join-Path $sdkSource 'sdk/10.0.403/dotnet.dll'), 'sdk-archive-marker')
@@ -138,6 +138,24 @@ if ($WithoutMainModule) {
         Assert-True (-not (Test-Path -LiteralPath $sdkZip)) 'Reusing an SDK removes its leftover ZIP'
         $sharedTools = Join-Path $sdkInstall 'tools'
         Assert-Equal (Find-BrainBuildTool 'dotnet' 'arm64' $sharedTools) $sdkHome 'An existing shared SDK is selected without another installation'
+        $repoCache = Join-Path $testRoot 'repo-tool-probe'
+        $localTools = Join-Path $repoCache '.tools'
+        New-Item -ItemType Directory -Path $localTools -Force | Out-Null
+        $localSdk = Join-Path $localTools (Split-Path $sdkHome -Leaf)
+        Copy-Item -LiteralPath $sdkHome -Destination $localSdk -Recurse
+        $previousToolsRoot = $env:DEVTOOLS_ROOT
+        $previousPath = $env:PATH
+        try {
+            $env:DEVTOOLS_ROOT = $sharedTools
+            $env:PATH = $localSdk
+            Assert-Equal (Find-BrainBuildTool 'dotnet' 'arm64' -RepoDir $repoCache) $sdkHome 'DEVTOOLS_ROOT takes priority over PATH and the project cache'
+            $env:DEVTOOLS_ROOT = Join-Path $testRoot 'missing-tools'
+            $env:PATH = ''
+            Assert-Equal (Find-BrainBuildTool 'dotnet' 'arm64' -RepoDir $repoCache) $localSdk 'An unavailable shared root falls back to the project cache'
+        } finally {
+            $env:DEVTOOLS_ROOT = $previousToolsRoot
+            $env:PATH = $previousPath
+        }
         Push-Location -LiteralPath $sdkInstall
         try { Assert-Equal (Find-BrainBuildTool 'dotnet' 'arm64' '.\tools') $sdkHome 'Relative tool directories use the current PowerShell location' }
         finally { Pop-Location }
@@ -307,8 +325,9 @@ param($InstallDir, $RepoDir, $DataDir, $Architecture, [switch]$OpenFirewall, [sw
 
     if ($VerifyPublish) {
         if ($env:OS -eq 'Windows_NT') {
-            $sdkDir = Find-BrainBuildTool 'dotnet' (Get-BrainArchitecture) $acceptanceToolsDir
-            if (-not $sdkDir) { throw 'A compatible .NET SDK was not found. Add it to PATH or supply -ToolsDir.' }
+            $architecture = Get-BrainArchitecture
+            $sdkDir = Find-BrainBuildTool 'dotnet' $architecture $acceptanceToolsDir -RepoDir $repoRoot
+            if (-not $sdkDir) { $sdkDir = Install-BrainDotnet $testRoot $architecture (Join-Path $testRoot '.tools') }
             $dotnet = Join-Path $sdkDir 'dotnet.exe'
         } else {
             $dotnet = Get-Command dotnet -CommandType Application -ErrorAction Stop | Select-Object -First 1 -ExpandProperty Source

@@ -1,6 +1,6 @@
 # Windows 局域网部署
 
-在提供网站的 Windows 10/11 主机上打开 **Windows PowerShell 5.1**，粘贴下面这一条命令。支持 x64 和 ARM64；首次安装需要联网。程序和构建工具均安装到当前用户目录，不需要 Docker、GitHub Actions、Artifact 或 Windows 服务。
+在提供网站的 Windows 10/11 主机上打开 **Windows PowerShell 5.1**，粘贴下面这一条命令。支持 x64 和 ARM64，首次安装需要联网。程序默认安装到当前用户目录。
 
 ```powershell
 & { $ErrorActionPreference = 'Stop'; Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force; [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12; $scriptFile = Join-Path ([IO.Path]::GetTempPath()) ('brain-training-bootstrap-' + [Guid]::NewGuid().ToString('N') + '.ps1'); try { Invoke-WebRequest -UseBasicParsing -Uri 'https://raw.githubusercontent.com/Ancho5515/brain-training-web/main/bootstrap.ps1' -OutFile $scriptFile; & $scriptFile } finally { if (Test-Path -LiteralPath $scriptFile) { Remove-Item -LiteralPath $scriptFile -Force } } }
@@ -18,15 +18,16 @@
 
 默认位置为 `%LOCALAPPDATA%\BrainTrainingWeb`。脚本寻找当前目录所属的仓库，其次查找安装目录中的 `repo`，再检查已有部署记录的源码位置；找不到才克隆公开仓库。候选仓库必须位于正确的 Git 根目录、`origin` 必须对应 `Ancho5515/brain-training-web`，并含客户端和服务端项目。当前目录属于其他仓库时会报错，请切换到普通目录，或者显式指定 `-RepoDir`。
 
-缺少 Git 时，脚本从 Git for Windows 官方发布页下载本机架构的 portable MinGit **2.56.0.4** ZIP，并按该官方发布中公开的固定 SHA256 校验；不依赖匿名 GitHub API 配额。Node 固定为 **24.22.1**，按官方 `SHASUMS256.txt` 核验 SHA256；.NET SDK 固定为 **10.0.403**，按 Microsoft 官方 10.0 发布元数据核验 SHA512。Node 和 .NET 缺少校验值或校验失败时直接终止。工具不加入系统 PATH，不安装到系统目录。Git、Node、.NET 和 npm 依赖遵循各自许可，仓库的 MIT 许可不替代第三方许可。
+缺少 Git 时，脚本从 Git for Windows 官方发布页下载本机架构的 portable MinGit **2.56.0.4** ZIP，并按发布页的固定 SHA256 校验。Node 固定为 **24.22.1**，按官方 `SHASUMS256.txt` 核验 SHA256。.NET SDK 固定为 **10.0.403**，按 Microsoft 官方 10.0 发布元数据核验 SHA512。Node 和 .NET 缺少校验值或校验失败时直接终止。Git、Node、.NET 和 npm 依赖遵循各自许可。
 
-部署优先复用版本和架构匹配的构建工具。依次查找显式指定的 `-ToolsDir`、当前 `PATH`、默认共享目录和旧安装的 `tools`。传入 `-ToolsDir` 时以它代替默认共享目录，也将缺失的工具安装到该处。默认共享目录是 `%LOCALAPPDATA%\DevTools`。
+部署依次查找显式指定的 `-ToolsDir`、环境变量 `DEVTOOLS_ROOT` 指向的共享目录、`PATH`、源码目录的 `.tools/` 和已有安装的 `tools/`，选择版本和架构匹配的工具。找不到时会下载到源码目录的 `.tools/`，后续部署复用这份副本。
 
-共享目录下按版本和架构存放工具，例如 `node-v24.22.1-win-x64` 和 `dotnet-10.0.403-x64`。其他项目可选用同一份便携工具，或将所需版本的目录加入其构建进程的 `PATH`。现有部署的便携工具也可直接复用。
+共享目录下按版本和架构存放工具，例如 `node-v24.22.1-win-x64` 和 `dotnet-10.0.403-x64`。共享目录位于 `D:\DevTools` 时，可以用以下命令在当前 PowerShell 会话部署和验收。
 
 ```powershell
-& .\bootstrap.ps1 -ToolsDir "$env:LOCALAPPDATA\BrainTrainingWeb\tools"
-& .\scripts\tests\run-tests.ps1 -VerifyPublish -ToolsDir "$env:LOCALAPPDATA\BrainTrainingWeb\tools"
+$env:DEVTOOLS_ROOT = 'D:\DevTools'
+& .\bootstrap.ps1
+& .\scripts\tests\run-tests.ps1 -VerifyPublish
 ```
 
 工具安装成功或失败时，脚本都会删除对应的下载 ZIP。复用已解压工具或系统 Git 时，也会清理该工具的残留 ZIP。
@@ -77,7 +78,8 @@ http://localhost:8787
 | --- | --- |
 | `%LOCALAPPDATA%\BrainTrainingWeb\repo` | 首次自动克隆的源码；已有外部源码可直接复用 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\tools` | 便携 Git 和仍可复用的旧版便携构建工具 |
-| `%LOCALAPPDATA%\DevTools` | 用户共享的 Node 和 .NET SDK，可通过 `-ToolsDir` 指定其他目录 |
+| `DEVTOOLS_ROOT` 指向的目录 | 用户共享的 Node 和 .NET SDK，可通过 `-ToolsDir` 指定本次优先查找的目录 |
+| 源码目录的 `.tools/` | 共享工具缺失时下载的项目工具 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\releases\<版本>` | 每次独立的发布文件；包含网页与 self-contained 服务端 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\data` | SQLite 数据库和 Data Protection 密钥，独立于版本目录 |
 | `%LOCALAPPDATA%\BrainTrainingWeb\logs` | 每次后台启动的标准输出及错误日志 |
@@ -127,7 +129,7 @@ Windows 防火墙可能首次提示是否允许访问。可信局域网请将网
 & .\scripts\tests\run-tests.ps1
 ```
 
-运行 `& .\scripts\tests\run-tests.ps1 -VerifyPublish` 可验证两种架构的自包含发布。验收复用匹配的 .NET SDK，可通过 `-ToolsDir` 选择共享目录。每次运行在独立临时目录保存构建产物、安装副本和测试数据，成功或失败退出时均自动清理，只在仓库的 `logs/acceptance/` 留下一份包含验收结果的 `.log` 文件。
+运行 `& .\scripts\tests\run-tests.ps1 -VerifyPublish` 可验证两种架构的自包含发布。验收复用匹配的 .NET SDK，可通过 `-ToolsDir` 指定本次优先查找的目录。缺失时，SDK 安装到本次验收的临时目录。退出时自动清理该目录，只在仓库的 `logs/acceptance/` 留下一份包含结果的 `.log` 文件。
 
 在 Windows x64 的 Windows PowerShell 5.1 已通过 6 个脚本的 AST 解析和包含双架构发布的 114 项部署断言。断言覆盖源码选择、版本和哈希校验、ZIP 清理、PID 复用、端口冲突、构建失败、健康失败回滚及数据路径保持，包含跨位数进程识别检查。
 

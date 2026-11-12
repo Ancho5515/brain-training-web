@@ -30,18 +30,18 @@ try {
     if ((Test-BrainSamePath $DataDir $RepoDir) -or (Test-BrainChildPath $DataDir $RepoDir)) { throw 'Use a persistent data directory outside the source checkout.' }
     $snapshot = $null; if ($current) { $snapshot = Get-BrainProcessSnapshot ([int]$current.processId) }
     Assert-BrainPortAvailable @(Get-BrainPortOwners) $current $snapshot $InstallDir
-    $nodeHome = Find-BrainBuildTool 'node' $Architecture $ToolsDir $InstallDir
-    $dotnetHome = Find-BrainBuildTool 'dotnet' $Architecture $ToolsDir $InstallDir
+    $nodeHome = Find-BrainBuildTool 'node' $Architecture $ToolsDir $InstallDir $RepoDir
+    $dotnetHome = Find-BrainBuildTool 'dotnet' $Architecture $ToolsDir $InstallDir $RepoDir
     foreach ($tool in @('node', 'dotnet')) {
         $spec = Get-BrainToolSpec $tool $Architecture
         $archive = Join-Path $InstallDir "downloads/$($spec.Archive)"
         if (Test-Path -LiteralPath $archive -PathType Leaf) { Remove-Item -LiteralPath $archive -Force }
     }
     if (-not $nodeHome -or -not $dotnetHome) {
-        $toolCache = Get-BrainToolsDir $ToolsDir
+        $toolCache = Join-Path $RepoDir '.tools'
         New-Item -Path $toolCache -ItemType Directory -Force | Out-Null
         try { $toolLock = [IO.File]::Open((Join-Path $toolCache 'install.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
-        catch { throw "Cannot acquire the shared tools lock in $toolCache. Retry after other installations finish: $($_.Exception.Message)" }
+        catch { throw "Cannot acquire the project tools lock in $toolCache. Retry after other installations finish: $($_.Exception.Message)" }
         try {
             if (-not $nodeHome) { $nodeHome = Install-BrainNode $InstallDir $Architecture $toolCache }
             if (-not $dotnetHome) { $dotnetHome = Install-BrainDotnet $InstallDir $Architecture $toolCache }
